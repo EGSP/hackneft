@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ПАК | Мониторинг</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="dashboard-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Платформа / ПАК</p>
+        <h1>Контроль качества</h1>
+      </div>
+      <div class="status" id="status" data-state="loading">
+        <span class="status-dot"></span>
+        <span id="status-text">Загрузка данных</span>
+      </div>
+    </header>
+
+    <section class="intro-row">
+      <div>
+        <p class="section-kicker">HACKNEFT</p>
+        <h2>Динамика показателей</h2>
+      </div>
+      <button class="refresh-button" id="refresh-button" type="button">
+        <span aria-hidden="true">↻</span>
+        Обновить
+      </button>
+    </section>
+
+    <section class="chart-grid" aria-label="Графики показателей ПАК">
+      <article class="chart-panel density-panel">
+        <div class="chart-heading">
+          <div>
+            <p class="metric-label">Показатель 01</p>
+            <h3>Плотность</h3>
+          </div>
+          <div class="metric-value" id="density-latest">--</div>
+        </div>
+        <div class="chart-wrap">
+          <svg id="density-chart" role="img" aria-label="График плотности" viewBox="0 0 760 320"></svg>
+        </div>
+      </article>
+
+      <article class="chart-panel sulfur-panel">
+        <div class="chart-heading">
+          <div>
+            <p class="metric-label">Показатель 02</p>
+            <h3>Содержание серы</h3>
+          </div>
+          <div class="metric-value" id="sulfur-latest">--</div>
+        </div>
+        <div class="chart-wrap">
+          <svg id="sulfur-chart" role="img" aria-label="График содержания серы" viewBox="0 0 760 320"></svg>
+        </div>
+      </article>
+    </section>
+
+    <footer class="dashboard-footer">
+      <span id="record-count">Нет данных</span>
+      <span>Источник: data_pak</span>
+    </footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

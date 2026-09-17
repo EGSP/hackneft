@@ -1,26 +1,23 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import DateTime, Float, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
 
 from hackneft_platform.db import Base
 
-
-class DataSource(Base):
-    __tablename__ = "data_sources"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    measurements: Mapped[list["Measurement"]
-                         ] = relationship(back_populates="source")
+# ORM-модель записи ПАК (данные о плотности и сере)
 
 
-class Measurement(Base):
-    __tablename__ = "measurements"
+class PakData(Base):
+    __tablename__ = "data_pak"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tag: Mapped[str] = mapped_column(String(100), index=True)
-    value: Mapped[float] = mapped_column(Float)
-    measured_at: Mapped[datetime] = mapped_column(DateTime)
-    source_id: Mapped[int] = mapped_column(ForeignKey("data_sources.id"))
-    source: Mapped[DataSource] = relationship(back_populates="measurements")
+    timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
+    density: Mapped[float] = mapped_column(Float)
+    sulfur: Mapped[float] = mapped_column(Float)
+
+    # Дополнительные ограничения таблицы:
+    # timestamp должен быть уникальным (не может быть двух записей с одним временем)
+    __table_args__ = (
+        UniqueConstraint("timestamp"),
+    )
