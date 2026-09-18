@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Сера | Мониторинг</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="dashboard-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Платформа / Датчики</p>
+        <h1>Контроль качества</h1>
+      </div>
+      <div class="status" id="status" data-state="loading">
+        <span class="status-dot"></span>
+        <span id="status-text">Загрузка данных</span>
+      </div>
+    </header>
+
+    <section class="intro-row">
+      <div>
+        <p class="section-kicker">HACKNEFT</p>
+        <h2>Динамика показателей</h2>
+      </div>
+      <button class="refresh-button" id="refresh-button" type="button">
+        <span aria-hidden="true">↻</span>
+        Обновить
+      </button>
+    </section>
+
+    <section class="chart-grid" aria-label="Графики показателей">
+      <article class="chart-panel sulfur-panel">
+        <div class="chart-heading">
+          <div>
+            <p class="metric-label">Показатель</p>
+            <h3>Содержание серы</h3>
+          </div>
+          <div class="metric-value" id="sulfur-latest">--</div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="sulfur-chart" role="img" aria-label="График содержания серы"></canvas>
+        </div>
+      </article>
+    </section>
+
+    <footer class="dashboard-footer">
+      <span id="record-count">Нет данных</span>
+      <span>Источник: sensor_data</span>
+    </footer>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
