@@ -22,7 +22,7 @@ from hackneft_common.ai import (
 )
 
 from ..errors import NotFoundError
-from .deps import ServicesDep
+from .deps import ServicesDep, errors
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -30,7 +30,7 @@ _HEARTBEAT_S = 25
 """Интервал служебных сообщений потока. Держится меньше таймаута простоя обратного прокси."""
 
 
-@router.get("")
+@router.get("", summary="Перечень сессий")
 async def list_sessions(
     services: ServicesDep, kind: SessionKind | None = None
 ) -> SessionListResponse:
@@ -38,7 +38,7 @@ async def list_sessions(
     return SessionListResponse(sessions=await services.sessions.list_sessions(kind))
 
 
-@router.post("")
+@router.post("", summary="Создание сессии", responses=errors(400, 404, 409))
 async def create_session(body: CreateSessionRequest, services: ServicesDep) -> Session:
     """Создание сессии. Агентская сессия начинает ход сразу; ответ содержит её идентификатор."""
     return await services.sessions.create(body)
@@ -48,13 +48,13 @@ async def create_session(body: CreateSessionRequest, services: ServicesDep) -> S
 # идентификатор сессии.
 
 
-@router.get("/tools")
+@router.get("/tools", summary="Состав инструментов")
 async def list_tools(services: ServicesDep) -> ToolListResponse:
     """Полный состав инструментов: встроенные и полученные от серверов MCP."""
     return ToolListResponse(tools=await services.tools.describe_all())
 
 
-@router.get("/snapshots/{snapshot_id}")
+@router.get("/snapshots/{snapshot_id}", summary="Снимок запроса", responses=errors(404))
 async def get_snapshot(snapshot_id: str, services: ServicesDep) -> RequestSnapshot:
     """Снимок постоянной части запроса, на который ссылается событие начала шага."""
     snapshot = await services.snapshots.find(snapshot_id)
@@ -63,25 +63,30 @@ async def get_snapshot(snapshot_id: str, services: ServicesDep) -> RequestSnapsh
     return snapshot
 
 
-@router.get("/{session_id}")
+@router.get("/{session_id}", summary="Сессия", responses=errors(404))
 async def get_session(session_id: str, services: ServicesDep) -> Session:
     return await services.sessions.require(session_id)
 
 
-@router.patch("/{session_id}")
+@router.patch("/{session_id}", summary="Переименование сессии", responses=errors(404))
 async def rename_session(
     session_id: str, body: RenameSessionRequest, services: ServicesDep
 ) -> Session:
     return await services.sessions.rename(session_id, body.title)
 
 
-@router.delete("/{session_id}")
+@router.delete("/{session_id}", summary="Удаление сессии", responses=errors(404))
 async def remove_session(session_id: str, services: ServicesDep) -> AcceptedResponse:
     await services.sessions.remove(session_id)
     return AcceptedResponse(accepted=True)
 
 
-@router.get("/{session_id}/events", response_model_exclude_none=True)
+@router.get(
+    "/{session_id}/events",
+    response_model_exclude_none=True,
+    summary="События журнала",
+    responses=errors(404),
+)
 async def read_events(
     session_id: str, services: ServicesDep, after: int = 0
 ) -> SessionEventsResponse:
@@ -91,7 +96,7 @@ async def read_events(
     return SessionEventsResponse(events=events, last_seq=events[-1].seq if events else after)
 
 
-@router.post("/{session_id}/messages")
+@router.post("/{session_id}/messages", summary="Отправка сообщения", responses=errors(404, 409))
 async def send_message(
     session_id: str, body: SendMessageRequest, services: ServicesDep
 ) -> AcceptedResponse:
@@ -104,26 +109,43 @@ async def send_message(
     return AcceptedResponse(accepted=True)
 
 
-@router.get("/{session_id}/context")
+@router.get("/{session_id}/context", summary="Заполненность контекста", responses=errors(404))
 async def measure_context(session_id: str, services: ServicesDep) -> SessionContextResponse:
     """Состав контекста сессии. Вычисляется в момент запроса и нигде не хранится."""
     await services.sessions.require(session_id)
     return await services.runner.measure_context(session_id)
 
 
-@router.post("/{session_id}/model")
+@router.post("/{session_id}/model", summary="Смена модели сессии", responses=errors(404, 409))
 async def select_model(session_id: str, body: SelectModelRequest, services: ServicesDep) -> Session:
     """Смена модели сессии. Допустима только когда ход не идёт."""
     return await services.sessions.select_model(session_id, body.model_id)
 
 
-@router.post("/{session_id}/interrupt")
+@router.post("/{session_id}/interrupt", summary="Прерывание хода", responses=errors(404))
 async def interrupt(session_id: str, services: ServicesDep) -> AcceptedResponse:
     """Прерывание сессии вместе с потомками."""
     return AcceptedResponse(accepted=await services.sessions.interrupt(session_id))
 
 
-@router.get("/{session_id}/stream")
+@router.get(
+    "/{session_id}/stream",
+    summary="Поток событий по SSE",
+    response_class=EventSourceResponse,
+    responses={
+        200: {
+            "description": (
+                "Сообщения `event: event`: поле `id` — порядковый номер события, поле `data` — "
+                "событие журнала в JSON, по той же схеме, что элементы `events` в ответе "
+                "`/events`. Раз в 25 секунд идёт служебное сообщение `event: ping` с пустыми "
+                "данными. При переподключении номер последнего полученного события передаётся "
+                "параметром `after`."
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+        **errors(404),
+    },
+)
 async def stream(session_id: str, services: ServicesDep, after: int = 0) -> EventSourceResponse:
     """Поток событий сессии по SSE.
 

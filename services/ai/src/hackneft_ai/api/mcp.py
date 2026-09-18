@@ -13,17 +13,17 @@ from hackneft_common.ai import (
     UpdateMcpConnectionRequest,
 )
 
-from .deps import ServicesDep
+from .deps import ServicesDep, errors
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
-@router.get("")
+@router.get("", summary="Подключения MCP")
 async def list_connections(services: ServicesDep) -> McpConnectionListResponse:
     return McpConnectionListResponse(connections=await services.mcp.list_connections())
 
 
-@router.post("")
+@router.post("", summary="Добавление подключения", responses=errors(400, 409))
 async def create_connection(
     body: CreateMcpConnectionRequest, services: ServicesDep
 ) -> McpConnection:
@@ -31,7 +31,7 @@ async def create_connection(
     return await services.mcp.create(body)
 
 
-@router.post("/import")
+@router.post("/import", summary="Импорт конфигурации mcpServers", responses=errors(400, 409))
 async def import_connections(
     body: ImportMcpConnectionsRequest, services: ServicesDep
 ) -> McpImportResponse:
@@ -41,31 +41,37 @@ async def import_connections(
     return McpImportResponse(created=created, skipped=skipped)
 
 
-@router.get("/{connection_id}")
+@router.get("/{connection_id}", summary="Подключение MCP", responses=errors(404))
 async def get_connection(connection_id: str, services: ServicesDep) -> McpConnection:
     return await services.mcp.require(connection_id)
 
 
-@router.patch("/{connection_id}")
+@router.patch("/{connection_id}", summary="Правка подключения", responses=errors(400, 404, 409))
 async def update_connection(
     connection_id: str, body: UpdateMcpConnectionRequest, services: ServicesDep
 ) -> McpConnection:
     return await services.mcp.update(connection_id, body)
 
 
-@router.delete("/{connection_id}")
+@router.delete("/{connection_id}", summary="Удаление подключения", responses=errors(404))
 async def remove_connection(connection_id: str, services: ServicesDep) -> AcceptedResponse:
     await services.mcp.remove(connection_id)
     return AcceptedResponse(accepted=True)
 
 
-@router.post("/{connection_id}/check")
+@router.post(
+    "/{connection_id}/check", summary="Обнаружение инструментов сервера", responses=errors(404)
+)
 async def check_connection(connection_id: str, services: ServicesDep) -> McpConnection:
     """Повторное обнаружение: подключение к серверу и запрос перечня инструментов."""
     return await services.mcp.check(connection_id)
 
 
-@router.post("/{connection_id}/toggle")
+@router.post(
+    "/{connection_id}/toggle",
+    summary="Включение и выключение подключения",
+    responses=errors(400, 404),
+)
 async def toggle_connection(
     connection_id: str, body: ToggleMcpConnectionRequest, services: ServicesDep
 ) -> McpConnection:

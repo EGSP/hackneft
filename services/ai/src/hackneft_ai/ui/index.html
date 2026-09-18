@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hackneft AI — настройки</title>
+    <link rel="stylesheet" href="vanilla.min.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header class="p-strip is-shallow app-header">
+      <div class="row">
+        <div class="col-8 col-medium-4">
+          <h1 class="p-heading--4 u-no-margin--bottom">Hackneft AI — настройки</h1>
+          <p class="u-text--muted u-no-margin--bottom">
+            Справочники провайдеров, моделей и подключений MCP.
+          </p>
+        </div>
+        <div class="col-4 col-medium-2 u-align--right app-header__actions">
+          <span id="health" class="p-status-label">Проверка…</span>
+          <a class="p-button" href="../docs" target="_blank" rel="noopener">API</a>
+          <button id="refresh" class="p-button--positive" type="button">Обновить</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="p-strip is-shallow">
+      <div class="row">
+        <div id="notice" class="p-notification--positive" role="status" hidden>
+          <div class="p-notification__content">
+            <p class="p-notification__message"></p>
+            <button class="p-notification__close" type="button" aria-label="Закрыть">Закрыть</button>
+          </div>
+        </div>
+
+        <nav class="p-tabs" aria-label="Разделы">
+          <div class="p-tabs__list" role="tablist">
+            <div class="p-tabs__item">
+              <button class="p-tabs__link" role="tab" data-tab="providers" aria-selected="true">
+                Провайдеры <span class="count" data-count="providers"></span>
+              </button>
+            </div>
+            <div class="p-tabs__item">
+              <button class="p-tabs__link" role="tab" data-tab="models" aria-selected="false">
+                Модели <span class="count" data-count="models"></span>
+              </button>
+            </div>
+            <div class="p-tabs__item">
+              <button class="p-tabs__link" role="tab" data-tab="mcp" aria-selected="false">
+                MCP <span class="count" data-count="mcp"></span>
+              </button>
+            </div>
+            <div class="p-tabs__item">
+              <button class="p-tabs__link" role="tab" data-tab="tools" aria-selected="false">
+                Инструменты <span class="count" data-count="tools"></span>
+              </button>
+            </div>
+          </div>
+        </nav>
+
+        <section id="providers" role="tabpanel"></section>
+        <section id="models" role="tabpanel" hidden></section>
+        <section id="mcp" role="tabpanel" hidden></section>
+        <section id="tools" role="tabpanel" hidden></section>
+      </div>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -186,10 +186,13 @@ class McpDirectory:
 
         name = request.name or row.name
         previous = _parse_transport(row.config)
-        transport_changed = request.transport is not None and (
-            previous is None or request.transport.model_dump() != previous.model_dump()
+        requested = (
+            None if request.transport is None else _unmask_transport(request.transport, previous)
         )
-        transport = request.transport or previous
+        transport_changed = requested is not None and (
+            previous is None or requested.model_dump() != previous.model_dump()
+        )
+        transport = requested or previous
 
         # Отбор инструментов участвует в проверке имён, поэтому берётся новый, если он задан.
         # Перечни заменяются только целиком и только явно: обнаружение их не трогает.
@@ -212,9 +215,9 @@ class McpDirectory:
         }
         if "title" in request.model_fields_set:
             values["title"] = request.title
-        if request.transport is not None:
-            values["transport"] = request.transport.type
-            values["config"] = request.transport.model_dump(mode="json")
+        if requested is not None:
+            values["transport"] = requested.type
+            values["config"] = requested.model_dump(mode="json")
         async with self._db.write() as tx:
             await tx.execute(
                 update(McpConnectionRow)
@@ -482,6 +485,22 @@ def _mask_transport(value: object) -> McpTransport:
     if isinstance(transport, HttpTransport | SseTransport):
         return transport.model_copy(update={"headers": dict.fromkeys(transport.headers, _MASK)})
     return transport
+
+
+def _unmask_transport(transport: McpTransport, previous: McpTransport | None) -> McpTransport:
+    """Заменяет маску прежними значениями, как при правке карточки провайдера.
+
+    Запись приходит клиенту с замаскированными переменными окружения и заголовками. Без этой
+    замены клиент, получивший запись и отправивший её обратно, записал бы маску вместо
+    секретов. Маска у ключа, которого прежде не было, сохраняется как значение.
+    """
+    if isinstance(transport, StdioTransport):
+        kept = previous.env if isinstance(previous, StdioTransport) else {}
+        env = {k: kept.get(k, v) if v == _MASK else v for k, v in transport.env.items()}
+        return transport.model_copy(update={"env": env})
+    kept = previous.headers if isinstance(previous, HttpTransport | SseTransport) else {}
+    headers = {k: kept.get(k, v) if v == _MASK else v for k, v in transport.headers.items()}
+    return transport.model_copy(update={"headers": headers})
 
 
 def _to_connection(row: McpConnectionRow) -> McpConnection:

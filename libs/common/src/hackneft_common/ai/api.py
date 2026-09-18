@@ -1,6 +1,6 @@
 """Запросы и ответы API сессий."""
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from .base import ApiModel
 from .events import SessionEvent
@@ -48,6 +48,22 @@ class SessionEventsResponse(ApiModel):
     events: list[SessionEvent]
     last_seq: int
     """Порядковый номер последнего события; клиент передаёт его при следующем чтении."""
+
+
+class ErrorResponse(ApiModel):
+    """Тело отказа службы, как в API xip.
+
+    Отдельные отказы несут дополнительные поля рядом с основными — например, перечень моделей,
+    ссылающихся на удаляемую карточку провайдера.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    status_code: int
+    error: str
+    """Краткое название кода состояния HTTP: `Bad Request`, `Not Found`, `Conflict`."""
+    message: str
+    """Причина отказа, пригодная для показа человеку."""
 
 
 class AcceptedResponse(ApiModel):

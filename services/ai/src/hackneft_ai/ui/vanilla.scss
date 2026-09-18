@@ -1,0 +1,42 @@
+// Сборка vanilla.min.css: из Vanilla Framework берутся только компоненты, нужные странице
+// настроек. Готовый CSS хранится в пакете, поэтому страница работает без внешней сети и без
+// Node.js при сборке сервиса. Пересборка после правки этого файла:
+//
+//   npm i vanilla-framework@4.59.0 sass@1
+//   npx sass --load-path=node_modules --style=compressed --no-source-map --quiet-deps \
+//     --silence-deprecation=import,global-builtin vanilla.scss vanilla.min.css
+//
+// и затем возвращение строки с лицензией в начало vanilla.min.css.
+
+// Системные шрифты вместо Ubuntu. Vanilla подключает шрифт Ubuntu с assets.ubuntu.com, только
+// если он указан в семействе; с системными шрифтами страница не обращается к внешним серверам и
+// одинаково выглядит без сети.
+$font-base-family: '-apple-system, "Segoe UI", "Roboto", "Oxygen", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif';
+$font-monospace: 'Consolas, "DejaVu Sans Mono", Monaco, "Courier New", monospace';
+
+@import 'vanilla-framework';
+
+@include vf-base;
+@include vf-p-buttons;
+@include vf-p-chip;
+@include vf-p-code-snippet;
+@include vf-p-form-help-text;
+@include vf-p-form-tick-elements;
+@include vf-p-forms;
+@include vf-p-grid;
+@include vf-p-headings;
+@include vf-p-links;
+@include vf-p-lists;
+@include vf-p-muted-heading;
+@include vf-p-notification;
+@include vf-p-rule;
+@include vf-p-section;
+@include vf-p-status-label;
+@include vf-p-strip;
+@include vf-p-tabs;
+@include vf-p-table-mobile-card;
+@include vf-u-align;
+@include vf-u-margin-collapse;
+@include vf-u-off-screen;
+@include vf-u-text-muted;
+@include vf-u-truncate;

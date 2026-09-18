@@ -123,6 +123,9 @@ class CreateMcpConnectionRequest(ApiModel):
 
 
 class UpdateMcpConnectionRequest(ApiModel):
+    """Правка записи. Значение-маска у переменной окружения или заголовка транспорта сохраняет
+    прежнее значение: запись можно получить, поправить и отправить обратно."""
+
     name: str | None = Field(default=None, pattern=MCP_NAME_PATTERN)
     title: str | None = Field(default=None, max_length=200)
     transport: McpTransport | None = None
