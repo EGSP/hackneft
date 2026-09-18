@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ПАК | Мониторинг</title>
+  <title>Сера | Мониторинг</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="dashboard-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Платформа / ПАК</p>
+        <p class="eyebrow">Платформа / Датчики</p>
         <h1>Контроль качества</h1>
       </div>
       <div class="status" id="status" data-state="loading">
@@ -30,39 +30,28 @@
       </button>
     </section>
 
-    <section class="chart-grid" aria-label="Графики показателей ПАК">
-      <article class="chart-panel density-panel">
-        <div class="chart-heading">
-          <div>
-            <p class="metric-label">Показатель 01</p>
-            <h3>Плотность</h3>
-          </div>
-          <div class="metric-value" id="density-latest">--</div>
-        </div>
-        <div class="chart-wrap">
-          <svg id="density-chart" role="img" aria-label="График плотности" viewBox="0 0 760 320"></svg>
-        </div>
-      </article>
-
+    <section class="chart-grid" aria-label="Графики показателей">
       <article class="chart-panel sulfur-panel">
         <div class="chart-heading">
           <div>
-            <p class="metric-label">Показатель 02</p>
+            <p class="metric-label">Показатель</p>
             <h3>Содержание серы</h3>
           </div>
           <div class="metric-value" id="sulfur-latest">--</div>
         </div>
         <div class="chart-wrap">
-          <svg id="sulfur-chart" role="img" aria-label="График содержания серы" viewBox="0 0 760 320"></svg>
+          <canvas id="sulfur-chart" role="img" aria-label="График содержания серы"></canvas>
         </div>
       </article>
     </section>
 
     <footer class="dashboard-footer">
       <span id="record-count">Нет данных</span>
-      <span>Источник: data_pak</span>
+      <span>Источник: sensor_data</span>
     </footer>
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -1,7 +1,6 @@
-const chartConfig = {
-  density: { chartId: "density-chart", latestId: "density-latest", color: "#2f8e70" },
-  sulfur: { chartId: "sulfur-chart", latestId: "sulfur-latest", color: "#e9795b" },
-};
+const SULFUR_THRESHOLD = 10;
+const SULFUR_SENSOR_NAME = "sulfur";
+const SULFUR_COLOR = "#e9795b";
 
 const formatNumber = (value) => Number(value).toLocaleString("ru-RU", {
   maximumFractionDigits: 4,
@@ -11,40 +10,71 @@ const formatTime = (value) => new Date(value).toLocaleString("ru-RU", {
   day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
 });
 
-function drawChart(svg, records, key, color) {
-  const width = 760;
-  const height = 320;
-  const padding = { top: 18, right: 18, bottom: 42, left: 48 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-  svg.innerHTML = "";
+let sulfurChart = null;
 
-  if (!records.length) {
-    svg.innerHTML = `<text class="empty-state" x="${width / 2}" y="${height / 2}" text-anchor="middle">Нет данных для отображения</text>`;
+function renderChart(canvas, records) {
+  const labels = records.map((record) => formatTime(record.timestamp));
+  const values = records.map((record) => Number(record.value));
+
+  if (sulfurChart) {
+    sulfurChart.data.labels = labels;
+    sulfurChart.data.datasets[0].data = values;
+    sulfurChart.update();
     return;
   }
 
-  const values = records.map((record) => Number(record[key]));
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const spread = maxValue - minValue || Math.max(Math.abs(maxValue) * 0.08, 1);
-  const chartMin = minValue - spread * 0.12;
-  const chartMax = maxValue + spread * 0.12;
-  const x = (index) => padding.left + (records.length === 1 ? chartWidth / 2 : index * chartWidth / (records.length - 1));
-  const y = (value) => padding.top + (chartMax - value) * chartHeight / (chartMax - chartMin);
-  const points = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-  const areaPoints = `${padding.left},${padding.top + chartHeight} ${points} ${padding.left + chartWidth},${padding.top + chartHeight}`;
-  const ticks = [0, 1, 2, 3, 4].map((index) => chartMin + (chartMax - chartMin) * index / 4);
-
-  svg.innerHTML = ticks.map((value, index) => {
-    const yPosition = padding.top + chartHeight - index * chartHeight / 4;
-    return `<line class="grid-line" x1="${padding.left}" x2="${padding.left + chartWidth}" y1="${yPosition}" y2="${yPosition}" />
-      <text class="axis-label" x="${padding.left - 10}" y="${yPosition + 4}" text-anchor="end">${formatNumber(value)}</text>`;
-  }).join("");
-  svg.innerHTML += `<polygon class="area" fill="${color}" points="${areaPoints}" /><polyline class="line" stroke="${color}" points="${points}" />`;
-  svg.innerHTML += records.map((record, index) => `<circle class="point" fill="${color}" cx="${x(index)}" cy="${y(values[index])}" r="5"><title>${formatTime(record.timestamp)}: ${formatNumber(values[index])}</title></circle>`).join("");
-  svg.innerHTML += `<text class="axis-label" x="${padding.left}" y="${height - 12}">${formatTime(records[0].timestamp)}</text>`;
-  svg.innerHTML += `<text class="axis-label" x="${padding.left + chartWidth}" y="${height - 12}" text-anchor="end">${formatTime(records[records.length - 1].timestamp)}</text>`;
+  sulfurChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        label: "Сера",
+        data: values,
+        borderColor: SULFUR_COLOR,
+        backgroundColor: `${SULFUR_COLOR}26`,
+        fill: true,
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (context) => `Сера: ${formatNumber(context.parsed.y)}`,
+          },
+        },
+        annotation: {
+          annotations: {
+            thresholdLine: {
+              type: "line",
+              scaleID: "y",
+              value: SULFUR_THRESHOLD,
+              borderColor: "#c0392b",
+              borderWidth: 2,
+              borderDash: [6, 6],
+              label: {
+                display: true,
+                content: `Граница: ${SULFUR_THRESHOLD}`,
+                position: "end",
+                backgroundColor: "#c0392b",
+                color: "white",
+                font: { size: 11 },
+              },
+            },
+          },
+        },
+      },
+      scales: {
+        y: { beginAtZero: false },
+      },
+    },
+  });
 }
 
 function setStatus(text, state) {
@@ -56,15 +86,17 @@ function setStatus(text, state) {
 async function loadDashboard() {
   setStatus("Загрузка данных", "loading");
   try {
-    const response = await fetch("/api/pak/history");
+    const response = await fetch("/api/sensor-data/history");
     if (!response.ok) throw new Error("Не удалось получить данные");
     const payload = await response.json();
-    const records = payload.items;
-    drawChart(document.querySelector(`#${chartConfig.density.chartId}`), records, "density", chartConfig.density.color);
-    drawChart(document.querySelector(`#${chartConfig.sulfur.chartId}`), records, "sulfur", chartConfig.sulfur.color);
+    const records = payload.items.filter(
+      (item) => item.sensor_name.trim().toLowerCase() === SULFUR_SENSOR_NAME
+    );
+
+    renderChart(document.querySelector("#sulfur-chart"), records);
+
     const latest = records[records.length - 1];
-    document.querySelector("#density-latest").textContent = latest ? formatNumber(latest.density) : "--";
-    document.querySelector("#sulfur-latest").textContent = latest ? formatNumber(latest.sulfur) : "--";
+    document.querySelector("#sulfur-latest").textContent = latest ? formatNumber(latest.value) : "--";
     document.querySelector("#record-count").textContent = `${records.length} записей`;
     setStatus("Данные актуальны", "ready");
   } catch (error) {

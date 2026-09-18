@@ -1,23 +1,26 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, UniqueConstraint
+from sqlalchemy import DateTime, Float, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from hackneft_platform.db import Base
 
-# ORM-модель записи ПАК (данные о плотности и сере)
+# ORM-модель показания датчика (единая таблица для данных всех датчиков)
 
 
-class PakData(Base):
-    __tablename__ = "data_pak"
+class SensorData(Base):
+    __tablename__ = "sensor_data"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
-    density: Mapped[float] = mapped_column(Float)
-    sulfur: Mapped[float] = mapped_column(Float)
+    sensor_name: Mapped[str] = mapped_column(String, index=True)
+    sensor_tag: Mapped[str] = mapped_column(String, index=True)
+    value: Mapped[float] = mapped_column(Float)
+    # Источник данных: откуда пришло показание (например: "pak", "scada", "manual")
+    source: Mapped[str] = mapped_column(String, index=True)
 
     # Дополнительные ограничения таблицы:
-    # timestamp должен быть уникальным (не может быть двух записей с одним временем)
+    # для одного датчика не может быть двух записей с одним и тем же timestamp
     __table_args__ = (
-        UniqueConstraint("timestamp"),
+        UniqueConstraint("timestamp", "sensor_tag"),
     )

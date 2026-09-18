@@ -41,7 +41,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    from hackneft_platform.models import PakData
+    from hackneft_platform.models import SensorData
 
-    _ = PakData
+    _ = SensorData
     Base.metadata.create_all(bind=engine)

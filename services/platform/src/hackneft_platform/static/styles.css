@@ -43,24 +43,16 @@ h3 { margin: 7px 0 0; font-size: 21px; letter-spacing: -.03em; }
 .refresh-button { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: var(--ink); padding: 12px 16px; color: white; cursor: pointer; font: 600 13px "Trebuchet MS", sans-serif; }
 .refresh-button:hover { background: var(--mint-deep); }
 .refresh-button span { font-size: 19px; line-height: 12px; }
-.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.chart-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
 .chart-panel { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); padding: 25px 25px 15px; }
-.density-panel { border-top: 4px solid var(--mint-deep); }
 .sulfur-panel { border-top: 4px solid var(--coral); }
 .metric-value { color: var(--ink); font: 500 24px "Courier New", monospace; }
-.chart-wrap { min-height: 320px; margin-top: 22px; }
-svg { display: block; width: 100%; height: auto; overflow: visible; }
-.grid-line { stroke: var(--line); stroke-width: 1; }
-.axis-label { fill: var(--muted); font: 11px "Courier New", monospace; }
-.area { opacity: .15; }
-.line { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.point { stroke: white; stroke-width: 2; }
-.empty-state { fill: var(--muted); font: 13px "Trebuchet MS", sans-serif; }
+.chart-wrap { position: relative; min-height: 380px; margin-top: 22px; }
+.chart-wrap canvas { width: 100% !important; height: 100% !important; }
 .dashboard-footer { margin-top: 16px; color: var(--muted); font: 11px "Courier New", monospace; text-transform: uppercase; }
 @media (max-width: 820px) {
   .dashboard-shell { padding: 42px 20px 22px; }
   .topbar, .intro-row { align-items: flex-start; flex-direction: column; }
   .intro-row { margin-top: 58px; }
-  .chart-grid { grid-template-columns: 1fr; }
-  .chart-wrap { min-height: 260px; }
+  .chart-wrap { min-height: 300px; }
 }

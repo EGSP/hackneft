@@ -3,14 +3,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from hackneft_platform.db import get_db, init_db
-from hackneft_platform.models import PakData
+from hackneft_platform.events import ai_agent_event_handler
+from hackneft_platform.models import SensorData
+from hackneft_platform.observers import sensor_tag_observer
 
 # Асинхронный контекстный менеджер жизненного цикла приложения:
 # выполняется при старте (init_db) и после завершения (yield)
@@ -32,87 +34,145 @@ db_dependency = Depends(get_db)
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
-# Схема входных данных для создания записи ПАК
+# Схема входных данных для создания записи показания датчика
 
 
-class PakDataCreate(BaseModel):
+class SensorDataCreate(BaseModel):
     timestamp: datetime
-    density: float
-    sulfur: float
+    sensor_name: str
+    sensor_tag: str
+    value: float
+    source: str
 
 # Схема ответа: те же поля + идентификатор записи
 
 
-class PakDataResponse(PakDataCreate):
+class SensorDataResponse(SensorDataCreate):
     id: int
 
 # Схема ответа со списком записей
 
 
-class PakDataListResponse(BaseModel):
-    items: list[PakDataResponse]
+class SensorDataListResponse(BaseModel):
+    items: list[SensorDataResponse]
 
-# POST-эндпоинт создания новой записи ПАК.
+# POST-эндпоинт создания новой записи показания датчика.
 
 
-@app.post("/api/pak", response_model=PakDataResponse, status_code=201)
-def create_pak_data(
-    payload: PakDataCreate,
+@app.post("/api/sensor-data", response_model=SensorDataResponse, status_code=201)
+def create_sensor_data(
+    payload: SensorDataCreate,
+    background_tasks: BackgroundTasks,
     db: Session = db_dependency,
-) -> PakDataResponse:
-    pak_data = PakData(
+) -> SensorDataResponse:
+    sensor_data = SensorData(
         timestamp=payload.timestamp,
-        density=payload.density,
-        sulfur=payload.sulfur,
+        sensor_name=payload.sensor_name,
+        sensor_tag=payload.sensor_tag,
+        value=payload.value,
+        source=payload.source,
     )
-    db.add(pak_data)
+    db.add(sensor_data)
     db.commit()
-    db.refresh(pak_data)
+    db.refresh(sensor_data)
 
-    return PakDataResponse(
-        id=pak_data.id,
-        timestamp=pak_data.timestamp,
-        density=pak_data.density,
-        sulfur=pak_data.sulfur,
+    sensor_tag_observer.notify(sensor_data.sensor_tag)
+
+    background_tasks.add_task(
+        ai_agent_event_handler.handle_sensor_data_created,
+        event_id=f"sensor-data:{sensor_data.id}",
+        data_id=sensor_data.id,
+        timestamp=sensor_data.timestamp,
+        sensor_name=sensor_data.sensor_name,
+        sensor_tag=sensor_data.sensor_tag,
+        value=sensor_data.value,
+        source=sensor_data.source,
     )
 
-# GET-эндпоинт получения последней (самой свежей) записи ПАК
-
-
-@app.get("/api/pak", response_model=PakDataResponse)
-def get_latest_pak_data(db: Session = db_dependency) -> PakDataResponse:
-    pak_data = db.scalar(
-        select(PakData).order_by(
-            desc(PakData.timestamp), desc(PakData.id)).limit(1)
-    )
-    if pak_data is None:
-        raise HTTPException(status_code=404, detail="No PAK data found")
-
-    return PakDataResponse(
-        id=pak_data.id,
-        timestamp=pak_data.timestamp,
-        density=pak_data.density,
-        sulfur=pak_data.sulfur,
+    return SensorDataResponse(
+        id=sensor_data.id,
+        timestamp=sensor_data.timestamp,
+        sensor_name=sensor_data.sensor_name,
+        sensor_tag=sensor_data.sensor_tag,
+        value=sensor_data.value,
+        source=sensor_data.source,
     )
 
-# GET-эндпоинт получения всей истории записей ПАК
+# GET-эндпоинт получения последней (самой свежей) записи показания датчика
 
 
-@app.get("/api/pak/history", response_model=PakDataListResponse)
-def get_pak_history(db: Session = db_dependency) -> PakDataListResponse:
-    pak_data = db.scalars(
-        select(PakData).order_by(PakData.timestamp, PakData.id)
-    ).all()
+@app.get("/api/sensor-data", response_model=SensorDataResponse)
+def get_latest_sensor_data(db: Session = db_dependency) -> SensorDataResponse:
+    sensor_data = db.scalar(
+        select(SensorData).order_by(
+            desc(SensorData.timestamp), desc(SensorData.id)).limit(1)
+    )
+    if sensor_data is None:
+        raise HTTPException(status_code=404, detail="No sensor data found")
 
-    return PakDataListResponse(
+    return SensorDataResponse(
+        id=sensor_data.id,
+        timestamp=sensor_data.timestamp,
+        sensor_name=sensor_data.sensor_name,
+        sensor_tag=sensor_data.sensor_tag,
+        value=sensor_data.value,
+        source=sensor_data.source,
+    )
+
+# GET-эндпоинт получения записей показаний датчиков за интервал времени
+
+
+@app.get("/api/sensor-data/range", response_model=SensorDataListResponse)
+def get_sensor_data_range(
+    start: datetime,
+    end: datetime,
+    sensor_tag: str | None = None,
+    db: Session = db_dependency,
+) -> SensorDataListResponse:
+    query = select(SensorData).where(
+        SensorData.timestamp >= start,
+        SensorData.timestamp <= end,
+    )
+    if sensor_tag is not None:
+        query = query.where(SensorData.sensor_tag == sensor_tag)
+    query = query.order_by(SensorData.timestamp, SensorData.id)
+
+    sensor_data = db.scalars(query).all()
+
+    return SensorDataListResponse(
         items=[
-            PakDataResponse(
+            SensorDataResponse(
                 id=item.id,
                 timestamp=item.timestamp,
-                density=item.density,
-                sulfur=item.sulfur,
+                sensor_name=item.sensor_name,
+                sensor_tag=item.sensor_tag,
+                value=item.value,
+                source=item.source,
             )
-            for item in pak_data
+            for item in sensor_data
+        ]
+    )
+
+# GET-эндпоинт получения всей истории записей показаний датчиков
+
+
+@app.get("/api/sensor-data/history", response_model=SensorDataListResponse)
+def get_sensor_data_history(db: Session = db_dependency) -> SensorDataListResponse:
+    sensor_data = db.scalars(
+        select(SensorData).order_by(SensorData.timestamp, SensorData.id)
+    ).all()
+
+    return SensorDataListResponse(
+        items=[
+            SensorDataResponse(
+                id=item.id,
+                timestamp=item.timestamp,
+                sensor_name=item.sensor_name,
+                sensor_tag=item.sensor_tag,
+                value=item.value,
+                source=item.source,
+            )
+            for item in sensor_data
         ]
     )
 
