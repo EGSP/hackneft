@@ -1,0 +1,41 @@
+# Запуск всех сервисов из корня репозитория:
+#
+#   docker compose up --build
+#
+# Платформа — http://localhost:8000, ИИ-сервис — http://localhost:8100.
+# Настройки ИИ-сервиса читаются из services/ai/.env, если файл существует; перечень —
+# в services/ai/.env.example.
+
+services:
+  ai:
+    build:
+      context: .
+      dockerfile: services/ai/Dockerfile
+    env_file:
+      - path: services/ai/.env
+        required: false
+    ports:
+      - "8100:8100"
+    volumes:
+      - ai-data:/data
+    restart: unless-stopped
+
+  platform:
+    build:
+      context: .
+      dockerfile: services/platform/Dockerfile
+    environment:
+      # Внутри сети compose сервисы обращаются друг к другу по имени.
+      AI_SERVICE_URL: http://ai:8100
+    ports:
+      - "8000:8000"
+    volumes:
+      - platform-data:/data
+    depends_on:
+      ai:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ai-data:
+  platform-data:

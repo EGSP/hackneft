@@ -1,8 +1,9 @@
-import os
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from hackneft_platform.config import database_path, load_env_file
 
 # Базовый класс для всех ORM-моделей (новый стиль SQLAlchemy 2.0)
 
@@ -11,9 +12,12 @@ class Base(DeclarativeBase):
     pass
 
 
-# URL подключения к БД: берём из переменной окружения DATABASE_URL,
-# иначе используем локальный SQLite-файл по умолчанию
-database_url = os.getenv("DATABASE_URL", "sqlite:///./hackneft.db")
+# Путь к файлу базы задаётся переменной PLATFORM_DATABASE_PATH так же, как в ИИ-сервисе:
+# относительный путь отсчитывается от каталога сервиса, а не от текущего каталога процесса.
+load_env_file()
+_database_file = database_path()
+_database_file.parent.mkdir(parents=True, exist_ok=True)
+database_url = f"sqlite:///{_database_file.as_posix()}"
 
 # Создаём движок SQLAlchemy.
 # Для SQLite отключаем проверку "check_same_thread", чтобы соединение можно было использовать из разных потоков (нужно для FastAPI).
