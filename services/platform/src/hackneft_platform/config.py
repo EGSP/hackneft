@@ -18,3 +18,12 @@ def database_path() -> Path:
     """Файл базы SQLite из `PLATFORM_DATABASE_PATH`, по умолчанию `data/platform.db`."""
     path = Path(os.getenv("PLATFORM_DATABASE_PATH") or "data/platform.db")
     return path if path.is_absolute() else SERVICE_DIR / path
+
+
+def ai_service_url() -> str:
+    """Адрес ИИ-сервиса из `AI_SERVICE_URL`, по умолчанию `http://localhost:8100`.
+
+    Используется необязательным подписчиком `handlers.ai_notify`, а не ядром платформы:
+    платформа не зависит от ИИ-сервиса, но подписчику нужно знать, куда стучаться.
+    """
+    return (os.getenv("AI_SERVICE_URL") or "http://localhost:8100").rstrip("/")
