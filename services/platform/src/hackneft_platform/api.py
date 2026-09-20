@@ -3,16 +3,17 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hackneft_platform import handlers  # noqa: F401  (регистрирует обработчиков событий)
 from hackneft_platform.db import get_db, init_db
-from hackneft_platform.events import ai_agent_event_handler
-from hackneft_platform.models import SensorData
-from hackneft_platform.observers import sensor_tag_observer
+from hackneft_platform.events import SensorDataCreated, dispatcher
+from hackneft_platform.models import SensorData, sensor_query
 
 # Асинхронный контекстный менеджер жизненного цикла приложения:
 # выполняется при старте (init_db) и после завершения (yield)
@@ -34,13 +35,14 @@ db_dependency = Depends(get_db)
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
-# Схема входных данных для создания записи показания датчика
+# Схема входных данных для создания записи показания датчика.
+# Только измерение: время, код датчика, значение, источник. Имя датчика сюда не входит —
+# оно регистрируется отдельно, в справочнике sensor_names (см. models.py).
 
 
 class SensorDataCreate(BaseModel):
     timestamp: datetime
-    sensor_name: str
-    sensor_tag: str
+    sensor_code: str
     value: float
     source: str
 
@@ -50,11 +52,27 @@ class SensorDataCreate(BaseModel):
 class SensorDataResponse(SensorDataCreate):
     id: int
 
-# Схема ответа со списком записей
+# Схема ответа со списком "сырых" записей измерений (без имени датчика)
 
 
 class SensorDataListResponse(BaseModel):
     items: list[SensorDataResponse]
+
+# Схема одной строки представления sensor_query: измерение вместе с ОДНИМ из имён
+# датчика. Одна и та же запись измерения (timestamp, sensor_code) может встретиться
+# в представлении несколько раз — по разу на каждое зарегистрированное имя. Фильтр
+# `name` в /range выбирает конкретное имя и тем самым убирает дублирование.
+
+
+class SensorQueryItem(BaseModel):
+    timestamp: datetime
+    sensor_code: str
+    sensor_name: str
+    value: float
+
+
+class SensorQueryListResponse(BaseModel):
+    items: list[SensorQueryItem]
 
 # POST-эндпоинт создания новой записи показания датчика.
 
@@ -63,42 +81,78 @@ class SensorDataListResponse(BaseModel):
 def create_sensor_data(
     payload: SensorDataCreate,
     background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = db_dependency,
 ) -> SensorDataResponse:
     sensor_data = SensorData(
         timestamp=payload.timestamp,
-        sensor_name=payload.sensor_name,
-        sensor_tag=payload.sensor_tag,
+        sensor_code=payload.sensor_code,
         value=payload.value,
         source=payload.source,
     )
+    
+    # После создания объекта SensorData добавляем его в сессию SQLAlchemy, чтобы подготовить к сохранению в базе данных.
     db.add(sensor_data)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # UNIQUE(timestamp, sensor_code): повторная доставка одного и того же показания —
+        # штатная ситуация для потоковых данных, а не ошибка. Отдаём уже сохранённую
+        # запись с кодом 200 вместо падения в 500.
+        db.rollback()
+        existing = db.scalar(
+            select(SensorData).where(
+                SensorData.timestamp == payload.timestamp,
+                SensorData.sensor_code == payload.sensor_code,
+            )
+        )
+        if existing is None:
+            # IntegrityError по другой причине (не по этому ограничению) — не подменяем
+            # её ложным идемпотентным ответом.
+            raise HTTPException(
+                status_code=409, detail="Конфликт при сохранении записи"
+            ) from None
+
+        response.status_code = 200
+        return SensorDataResponse(
+            id=existing.id,
+            timestamp=existing.timestamp,
+            sensor_code=existing.sensor_code,
+            value=existing.value,
+            source=existing.source,
+        )
+
+    # После успешного сохранения в БД обновляем объект из БД, чтобы получить сгенерированный идентификатор
     db.refresh(sensor_data)
 
-    sensor_tag_observer.notify(sensor_data.sensor_tag)
-
+    # Публикация события уходит в фон: ответ клиенту не должен ждать,
+    # пока отработают все подписчики диспетчера (в т.ч. будущие, с сетевыми
+    # вызовами). Подписчики сами решают, что делать с событием — эндпоинт
+    # не знает, сколько их и что они делают.
     background_tasks.add_task(
-        ai_agent_event_handler.handle_sensor_data_created,
-        event_id=f"sensor-data:{sensor_data.id}",
-        data_id=sensor_data.id,
-        timestamp=sensor_data.timestamp,
-        sensor_name=sensor_data.sensor_name,
-        sensor_tag=sensor_data.sensor_tag,
-        value=sensor_data.value,
-        source=sensor_data.source,
+        dispatcher.publish,
+        SensorDataCreated(
+            event_id=f"sensor-data:{sensor_data.id}",
+            data_id=sensor_data.id,
+            timestamp=sensor_data.timestamp,
+            sensor_code=sensor_data.sensor_code,
+            value=sensor_data.value,
+            source=sensor_data.source,
+        ),
     )
 
     return SensorDataResponse(
         id=sensor_data.id,
         timestamp=sensor_data.timestamp,
-        sensor_name=sensor_data.sensor_name,
-        sensor_tag=sensor_data.sensor_tag,
+        sensor_code=sensor_data.sensor_code,
         value=sensor_data.value,
         source=sensor_data.source,
     )
 
-# GET-эндпоинт получения последней (самой свежей) записи показания датчика
+# GET-эндпоинт получения последней (самой свежей) записи показания датчика.
+# Читает sensor_data напрямую (не через sensor_query) — здесь не нужно имя датчика,
+# и через представление одно измерение размножилось бы на все свои синонимы.
 
 
 @app.get("/api/sensor-data", response_model=SensorDataResponse)
@@ -113,68 +167,53 @@ def get_latest_sensor_data(db: Session = db_dependency) -> SensorDataResponse:
     return SensorDataResponse(
         id=sensor_data.id,
         timestamp=sensor_data.timestamp,
-        sensor_name=sensor_data.sensor_name,
-        sensor_tag=sensor_data.sensor_tag,
+        sensor_code=sensor_data.sensor_code,
         value=sensor_data.value,
         source=sensor_data.source,
     )
 
-# GET-эндпоинт получения записей показаний датчиков за интервал времени
+# GET-эндпоинт получения записей показаний датчиков за интервал времени.
+# Запрос — к представлению sensor_query, а не к sensor_data: `name` может быть как
+# кодом датчика, так и любым его синонимом (оба зарегистрированы в sensor_names),
+# запрос их не различает — `?name=F6` и `?name=ПАК` для одного датчика вернут
+# одни и те же измерения.
 
 
-@app.get("/api/sensor-data/range", response_model=SensorDataListResponse)
+@app.get("/api/sensor-data/range", response_model=SensorQueryListResponse)
 def get_sensor_data_range(
     start: datetime,
     end: datetime,
-    sensor_tag: str | None = None,
+    name: str | None = None,
     db: Session = db_dependency,
-) -> SensorDataListResponse:
-    query = select(SensorData).where(
-        SensorData.timestamp >= start,
-        SensorData.timestamp <= end,
+) -> SensorQueryListResponse:
+    query = select(sensor_query).where(
+        sensor_query.c.timestamp >= start,
+        sensor_query.c.timestamp <= end,
     )
-    if sensor_tag is not None:
-        query = query.where(SensorData.sensor_tag == sensor_tag)
-    query = query.order_by(SensorData.timestamp, SensorData.id)
-
-    sensor_data = db.scalars(query).all()
-
-    return SensorDataListResponse(
-        items=[
-            SensorDataResponse(
-                id=item.id,
-                timestamp=item.timestamp,
-                sensor_name=item.sensor_name,
-                sensor_tag=item.sensor_tag,
-                value=item.value,
-                source=item.source,
-            )
-            for item in sensor_data
-        ]
+    if name is not None:
+        query = query.where(sensor_query.c.sensor_name == name)
+    query = query.order_by(
+        sensor_query.c.timestamp, sensor_query.c.sensor_code, sensor_query.c.sensor_name
     )
 
-# GET-эндпоинт получения всей истории записей показаний датчиков
+    rows = db.execute(query).mappings().all()
+
+    return SensorQueryListResponse(items=[SensorQueryItem(**row) for row in rows])
+
+# GET-эндпоинт получения всей истории записей показаний датчиков.
+# Тоже через sensor_query: каждое измерение приходит с одним из своих имён,
+# так что потребитель (например, фронтенд) может отфильтровать по конкретному
+# человекочитаемому имени, не заботясь о том, код это или синоним.
 
 
-@app.get("/api/sensor-data/history", response_model=SensorDataListResponse)
-def get_sensor_data_history(db: Session = db_dependency) -> SensorDataListResponse:
-    sensor_data = db.scalars(
-        select(SensorData).order_by(SensorData.timestamp, SensorData.id)
-    ).all()
-
-    return SensorDataListResponse(
-        items=[
-            SensorDataResponse(
-                id=item.id,
-                timestamp=item.timestamp,
-                sensor_name=item.sensor_name,
-                sensor_tag=item.sensor_tag,
-                value=item.value,
-                source=item.source,
-            )
-            for item in sensor_data
-        ]
+@app.get("/api/sensor-data/history", response_model=SensorQueryListResponse)
+def get_sensor_data_history(db: Session = db_dependency) -> SensorQueryListResponse:
+    query = select(sensor_query).order_by(
+        sensor_query.c.timestamp, sensor_query.c.sensor_code, sensor_query.c.sensor_name
     )
+    rows = db.execute(query).mappings().all()
+
+    return SensorQueryListResponse(items=[SensorQueryItem(**row) for row in rows])
 
 
 # Путь к каталогу со статикой (фронтенд: HTML/CSS/JS)

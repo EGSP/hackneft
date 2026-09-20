@@ -1,64 +1,63 @@
 import logging
-import os
+from collections import defaultdict
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
-# Обработчик событий: уведомляет внешний AI-сервис о новых показаниях датчиков
+# Событие: создана новая запись показания датчика.
+# Несёт код датчика (sensor_code), а не его имя — имя не хранится в измерении
+# (см. models.py), подписчику, которому оно нужно, придётся сходить в sensor_query сам.
 
 
-class AiAgentEventHandler:
+@dataclass(frozen=True)
+class SensorDataCreated:
+    event_id: str
+    data_id: int
+    timestamp: datetime
+    sensor_code: str
+    value: float
+    source: str
+
+
+Handler = Callable[[SensorDataCreated], Awaitable[None]]
+
+
+# Диспетчер событий: обработчики регистрируются через `on()`, эндпоинт
+# только публикует событие через `publish()` и не знает, кто и сколько
+# на него подписано.
+class EventDispatcher:
     def __init__(self) -> None:
-        # URL AI-сервиса, куда отправляются события (можно переопределить через переменную окружения)
-        self.ai_service_url = os.getenv(
-            "AI_SERVICE_URL",
-            "http://localhost:8001",
-        ).rstrip("/")
+        self._handlers: dict[str | None, list[Handler]] = defaultdict(list)
 
-    # Вызывается фоновой задачей из api.py после успешного создания записи в sensor_data.
-    # Отправляет событие "sensor_data.created" в AI-сервис; ошибки доставки только логируются,
-    # чтобы не влиять на ответ клиенту, инициировавшему запись.
-    async def handle_sensor_data_created(
-        self,
-        *,
-        event_id: str,
-        data_id: int,
-        timestamp: datetime,
-        sensor_name: str,
-        sensor_tag: str,
-        value: float,
-        source: str,
-    ) -> None:
-        event: dict[str, Any] = {
-            "event_id": event_id,
-            "event_type": "sensor_data.created",
-            "aggregate_id": data_id,
-            "payload": {
-                "id": data_id,
-                "timestamp": timestamp.isoformat(),
-                "sensor_name": sensor_name,
-                "sensor_tag": sensor_tag,
-                "value": value,
-                "source": source,
-            },
-        }
+    # Регистрирует обработчик события SensorDataCreated.
+    # sensor_code=None — обработчик получает события всех датчиков,
+    # иначе — только события с указанным sensor_code.
+    def on(self, sensor_code: str | None = None) -> Callable[[Handler], Handler]:
+        """Регистрирует обработчик события SensorDataCreated.
 
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    f"{self.ai_service_url}/agents/run",
-                    json=event,
-                )
-                response.raise_for_status()
-        except httpx.HTTPError:
-            logger.exception(
-                "Failed to deliver event %s to AI service",
-                event_id,
-            )
+        sensor_code=None — обработчик получает события всех датчиков,
+        иначе — только события с указанным sensor_code.
+        """
+
+        def register(fn: Handler) -> Handler:
+            self._handlers[sensor_code].append(fn)
+            return fn
+
+        return register
+
+    # Публикует событие SensorDataCreated, вызывая все зарегистрированные обработчики.
+    # Если какой-то обработчик завершился с ошибкой, она логируется,
+    # но не прерывает вызов остальных обработчиков.
+    async def publish(self, event: SensorDataCreated) -> None:
+        handlers = self._handlers[None] + self._handlers[event.sensor_code]
+        for fn in handlers:
+            try:
+                await fn(event)
+            except Exception:
+                logger.exception("Обработчик %s завершился ошибкой", fn.__name__)
 
 
-# Синглтон-инстанс обработчика, используется в api.py
-ai_agent_event_handler = AiAgentEventHandler()
+# Синглтон-инстанс диспетчера, используется в api.py и модулях обработчиков.
+dispatcher = EventDispatcher()
