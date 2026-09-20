@@ -56,21 +56,33 @@ def init_db() -> None:
 
 
 def _seed_sensor_names() -> None:
-    """Заполняет sensor_names исходными кодами датчиков (код как имя самого себя).
+    """Заполняет sensor_names исходными кодами датчиков и их синонимами.
+
+    Каждый код записывается именем самого себя (sensor_code == name), после чего
+    добавляются синонимы из catalog.SENSOR_SYNONYMS. Синонимы, введённые пользователем
+    через интерфейс справочника, этой процедурой не затрагиваются: она только
+    дописывает недостающие строки и ничего не удаляет.
 
     INSERT OR IGNORE — операция идемпотентна: при повторном запуске уже вставленные
-    коды молча пропускаются, ошибок из-за первичного ключа (sensor_code, name) нет.
+    пары молча пропускаются, ошибок из-за первичного ключа (sensor_code, name) нет.
     """
-    from hackneft_platform.catalog import KNOWN_SENSOR_CODES
+    from hackneft_platform.catalog import KNOWN_SENSOR_CODES, SENSOR_SYNONYMS
+
+    pairs = [(code, code) for code in KNOWN_SENSOR_CODES]
+    pairs += [
+        (code, synonym)
+        for code, synonyms in SENSOR_SYNONYMS.items()
+        for synonym in synonyms
+    ]
 
     with engine.begin() as connection:
-        for code in KNOWN_SENSOR_CODES:
+        for code, name in pairs:
             connection.execute(
                 text(
                     "INSERT OR IGNORE INTO sensor_names (sensor_code, name) "
-                    "VALUES (:code, :code)"
+                    "VALUES (:code, :name)"
                 ),
-                {"code": code},
+                {"code": code, "name": name},
             )
 
 

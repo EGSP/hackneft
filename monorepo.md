@@ -9,6 +9,7 @@
 | `services/aggregator` | `hackneft_aggregator` | Сбор и преобразование данных датчиков и внешних источников |
 | `services/platform` | `hackneft_platform` | База данных, пользовательский интерфейс, обработка событий |
 | `services/ai` | `hackneft_ai` | Управление и запуск агентов |
+| `services/platform/web` | — | Веб-интерфейс платформы: Vite, React, Ant Design |
 | `libs/common` | `hackneft_common` | Код, разделяемый между сервисами: модели данных, конфигурация, служебные утилиты |
 | `docs` | — | Постановка задачи и проектная документация |
 
@@ -53,4 +54,34 @@ uv add --package hackneft-aggregator <пакет>
 uv run ruff check .
 uv run mypy .
 uv run pytest
+```
+
+## Веб-интерфейс платформы
+
+Интерфейс собирается отдельно от Python-пакетов: `uv` им не управляет, зависимости описаны
+в `services/platform/web/package.json`. Результат сборки попадает в
+`services/platform/src/hackneft_platform/static` и оттуда отдаётся самим FastAPI, поэтому
+в рабочем контуре сервис остаётся одним процессом на одном порту, а Node в образе
+отсутствует — он нужен только ступени сборки (см. `services/platform/Dockerfile`).
+
+Каталог статики хранится вне репозитория: он пересоздаётся сборкой.
+
+Установка зависимостей и сборка:
+
+```
+npm install --prefix services/platform/web
+npm run build --prefix services/platform/web
+```
+
+В разработке запускаются два процесса. Первый — API:
+
+```
+uv run --package hackneft-platform uvicorn hackneft_platform.api:app --reload --port 8000
+```
+
+Второй — сервер разработки Vite, который открывается на `http://localhost:5173` и
+перенаправляет обращения к `/api` на первый:
+
+```
+npm run dev --prefix services/platform/web
 ```
