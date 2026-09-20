@@ -233,11 +233,13 @@ document.getElementById("settings").addEventListener("submit", (event) => {
   event.preventDefault();
   const interval = Number(document.getElementById("interval").value);
   const step = Number(document.getElementById("step").value);
+  act(() => call("PATCH", "../api/settings", { intervalMinutes: interval, stepMinutes: step }));
+});
+
+document.getElementById("cursor-form").addEventListener("submit", (event) => {
+  event.preventDefault();
   const cursor = document.getElementById("cursor").value;
-  act(async () => {
-    await call("PATCH", "../api/settings", { intervalMinutes: interval, stepMinutes: step });
-    return call("PUT", "../api/cursor", { cursor });
-  });
+  act(() => call("PUT", "../api/cursor", { cursor }));
 });
 
 // Первая загрузка заполняет и обновляемый раздел, и поля формы. Дальше форму заполняют

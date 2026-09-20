@@ -47,6 +47,10 @@
             <button id="reset" class="p-button" type="button">Сбросить курсор</button>
           </div>
 
+          <!-- Темп и положение курсора задаются разными формами. Поле курсора заполняется
+               при загрузке страницы и дальше не обновляется, иначе вводимое значение
+               терялось бы; общая кнопка возвращала бы курсор к значению, устаревшему с
+               момента загрузки. -->
           <form id="settings" class="p-form settings-form">
             <div class="p-form__group">
               <label for="interval">Интервал опроса, мин</label>
@@ -56,16 +60,24 @@
               <label for="step">Шаг курсора, мин</label>
               <input id="step" name="stepMinutes" type="number" min="0.01" step="0.01" />
             </div>
-            <div class="p-form__group">
-              <label for="cursor">Курсор</label>
-              <input id="cursor" name="cursor" type="datetime-local" step="1" />
-            </div>
-            <button class="p-button--positive" type="submit">Применить</button>
+            <button class="p-button--positive" type="submit">Применить темп</button>
           </form>
           <p class="p-form-help-text">
             Отношение шага к интервалу — коэффициент ускорения симуляции. Шаг выгрузки
             составляет 10 минут: при равных значениях поток идёт в реальном темпе установки.
             Страница обновляется раз в половину интервала.
+          </p>
+
+          <form id="cursor-form" class="p-form settings-form">
+            <div class="p-form__group">
+              <label for="cursor">Положение курсора</label>
+              <input id="cursor" name="cursor" type="datetime-local" step="1" />
+            </div>
+            <button class="p-button" type="submit">Перевести курсор</button>
+          </form>
+          <p class="p-form-help-text">
+            Поле показывает положение курсора на момент загрузки страницы; текущее положение
+            приведено выше, в разделе «Курсор».
           </p>
         </section>
       </div>
