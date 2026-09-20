@@ -24,10 +24,16 @@ services:
     build:
       context: .
       dockerfile: services/platform/Dockerfile
+    environment:
+      # Внутри сети compose сервисы обращаются друг к другу по имени.
+      AI_SERVICE_URL: http://ai:8100
     ports:
       - "8000:8000"
     volumes:
       - platform-data:/data
+    depends_on:
+      ai:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

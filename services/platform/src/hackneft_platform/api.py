@@ -90,6 +90,8 @@ def create_sensor_data(
         value=payload.value,
         source=payload.source,
     )
+    
+    # После создания объекта SensorData добавляем его в сессию SQLAlchemy, чтобы подготовить к сохранению в базе данных.
     db.add(sensor_data)
 
     try:
@@ -121,6 +123,7 @@ def create_sensor_data(
             source=existing.source,
         )
 
+    # После успешного сохранения в БД обновляем объект из БД, чтобы получить сгенерированный идентификатор
     db.refresh(sensor_data)
 
     # Публикация события уходит в фон: ответ клиенту не должен ждать,

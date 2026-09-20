@@ -31,6 +31,9 @@ class EventDispatcher:
     def __init__(self) -> None:
         self._handlers: dict[str | None, list[Handler]] = defaultdict(list)
 
+    # Регистрирует обработчик события SensorDataCreated.
+    # sensor_code=None — обработчик получает события всех датчиков,
+    # иначе — только события с указанным sensor_code.
     def on(self, sensor_code: str | None = None) -> Callable[[Handler], Handler]:
         """Регистрирует обработчик события SensorDataCreated.
 
@@ -44,6 +47,9 @@ class EventDispatcher:
 
         return register
 
+    # Публикует событие SensorDataCreated, вызывая все зарегистрированные обработчики.
+    # Если какой-то обработчик завершился с ошибкой, она логируется,
+    # но не прерывает вызов остальных обработчиков.
     async def publish(self, event: SensorDataCreated) -> None:
         handlers = self._handlers[None] + self._handlers[event.sensor_code]
         for fn in handlers:
