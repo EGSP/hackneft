@@ -150,6 +150,76 @@ def create_sensor_data(
         source=sensor_data.source,
     )
 
+# Схема запроса пакетной записи показаний. Поток телеметрии приходит отметками времени:
+# на одну отметку приходится по одному показанию с каждого датчика установки, то есть
+# несколько десятков записей. Поодиночке это столько же HTTP-запросов, поэтому пакет
+# принимается одним запросом и сохраняется одной транзакцией.
+
+
+class SensorDataBulkCreate(BaseModel):
+    items: list[SensorDataCreate]
+
+# Схема ответа на пакетную запись. Возвращаются не сами записи, а их количества:
+# отправителю потока нужно знать, сколько показаний принято и сколько отброшено как
+# повторные, а не идентификаторы каждой строки.
+
+
+class SensorDataBulkResponse(BaseModel):
+    accepted: int
+    duplicates: int
+
+# POST-эндпоинт пакетной записи показаний.
+# Повторная доставка обрабатывается так же, как в одиночном эндпоинте: нарушение
+# UNIQUE(timestamp, sensor_code) — штатная ситуация потока, а не ошибка. Каждая запись
+# вставляется во вложенной транзакции (SAVEPOINT), поэтому повтор одной записи не
+# отменяет остальные записи пакета.
+
+
+@app.post("/api/sensor-data/bulk", response_model=SensorDataBulkResponse, status_code=201)
+def create_sensor_data_bulk(
+    payload: SensorDataBulkCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = db_dependency,
+) -> SensorDataBulkResponse:
+    saved: list[SensorData] = []
+    duplicates = 0
+
+    for item in payload.items:
+        sensor_data = SensorData(
+            timestamp=item.timestamp,
+            sensor_code=item.sensor_code,
+            value=item.value,
+            source=item.source,
+        )
+        try:
+            with db.begin_nested():
+                db.add(sensor_data)
+                db.flush()
+        except IntegrityError:
+            duplicates += 1
+            continue
+        saved.append(sensor_data)
+
+    db.commit()
+
+    # События публикуются по одному на запись: подписчики диспетчера рассчитаны на
+    # отдельное показание и о пакете ничего не знают. Публикация уходит в фон по той же
+    # причине, что и в одиночном эндпоинте, — ответ не должен ждать подписчиков.
+    for sensor_data in saved:
+        background_tasks.add_task(
+            dispatcher.publish,
+            SensorDataCreated(
+                event_id=f"sensor-data:{sensor_data.id}",
+                data_id=sensor_data.id,
+                timestamp=sensor_data.timestamp,
+                sensor_code=sensor_data.sensor_code,
+                value=sensor_data.value,
+                source=sensor_data.source,
+            ),
+        )
+
+    return SensorDataBulkResponse(accepted=len(saved), duplicates=duplicates)
+
 # GET-эндпоинт получения последней (самой свежей) записи показания датчика.
 # Читает sensor_data напрямую (не через sensor_query) — здесь не нужно имя датчика,
 # и через представление одно измерение размножилось бы на все свои синонимы.

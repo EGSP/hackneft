@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hackneft Aggregator — симуляция потока</title>
+    <link rel="stylesheet" href="vanilla.min.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header class="p-strip is-shallow app-header">
+      <div class="row">
+        <div class="col-8 col-medium-4">
+          <h1 class="p-heading--4 u-no-margin--bottom">Hackneft Aggregator</h1>
+          <p class="u-text--muted u-no-margin--bottom">
+            Симуляция потока телеметрии: курсор движется по выгрузкам CSV, показания уходят на
+            платформу.
+          </p>
+        </div>
+        <div class="col-4 col-medium-2 u-align--right app-header__actions">
+          <span id="platform-status" class="p-status-label">Платформа: проверка…</span>
+          <a class="p-button" href="../docs" target="_blank" rel="noopener">API</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="p-strip is-shallow">
+      <div class="row">
+        <div id="notice" class="p-notification--negative" role="status" hidden>
+          <div class="p-notification__content">
+            <p class="p-notification__message"></p>
+          </div>
+        </div>
+
+        <!-- Обновляемая часть. Скрипт заменяет только содержимое этого раздела, форма
+             настроек и кнопки остаются нетронутыми: иначе вводимое значение терялось бы
+             при каждом обновлении. -->
+        <section id="live" aria-live="polite">
+          <p class="u-text--muted">Загрузка состояния…</p>
+        </section>
+
+        <section class="app-controls">
+          <h2 class="p-heading--5">Управление</h2>
+          <div class="toolbar">
+            <button id="resume" class="p-button--positive" type="button">Продолжить</button>
+            <button id="pause" class="p-button" type="button">Пауза</button>
+            <button id="reset" class="p-button" type="button">Сбросить курсор</button>
+          </div>
+
+          <form id="settings" class="p-form settings-form">
+            <div class="p-form__group">
+              <label for="interval">Интервал опроса, мин</label>
+              <input id="interval" name="intervalMinutes" type="number" min="0.01" step="0.01" />
+            </div>
+            <div class="p-form__group">
+              <label for="step">Шаг курсора, мин</label>
+              <input id="step" name="stepMinutes" type="number" min="0.01" step="0.01" />
+            </div>
+            <div class="p-form__group">
+              <label for="cursor">Курсор</label>
+              <input id="cursor" name="cursor" type="datetime-local" step="1" />
+            </div>
+            <button class="p-button--positive" type="submit">Применить</button>
+          </form>
+          <p class="p-form-help-text">
+            Отношение шага к интервалу — коэффициент ускорения симуляции. Шаг выгрузки
+            составляет 10 минут: при равных значениях поток идёт в реальном темпе установки.
+            Страница обновляется раз в половину интервала.
+          </p>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

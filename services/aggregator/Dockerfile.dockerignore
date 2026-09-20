@@ -1,0 +1,11 @@
+# Действует только при сборке services/aggregator/Dockerfile: общий .dockerignore в корне не нужен.
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/.env
+**/data
+.git
+**/*.csv
