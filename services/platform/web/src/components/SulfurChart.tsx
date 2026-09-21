@@ -1,5 +1,10 @@
 import * as echarts from 'echarts'
+// Русская локаль ECharts: подписи месяцев на оси времени и надписи элементов графика.
+// Полная сборка ECharts содержит только английскую и китайскую.
+import langRU from 'echarts/i18n/langRU-obj.js'
 import { useEffect, useRef } from 'react'
+
+import type { Range } from './timeWindow'
 
 export type SulfurPoint = [number, number]
 
@@ -12,28 +17,57 @@ interface Props {
   limsName: string
   limit: number
   loading: boolean
+  // Окно режима: границы оси времени и полосы прокрутки.
+  extent: Range
+  // Видимая часть окна. Задаётся страницей и меняется пользователем через onViewChange.
+  view: Range
+  // Полосы фона — каждая вторая единица деления окна.
+  bands: Range[]
+  onViewChange: (view: Range) => void
 }
 
 const PAK_COLOR = '#1677ff'
 const LIMS_COLOR = '#fa8c16'
 const LIMIT_COLOR = '#cf1322'
+const BAND_COLOR = 'rgba(0, 0, 0, 0.035)'
+
+echarts.registerLocale('RU', langRU)
 
 /**
  * Совмещённый график двух рядов серы.
  *
- * Экземпляр ECharts создаётся один раз и далее только получает новые данные через
- * setOption с параметром notMerge=false: полная пересборка сбрасывала бы положение
- * прокрутки, а оно меняется пользователем и обновлением данных затрагиваться не должно.
+ * Экземпляр ECharts создаётся один раз и далее только получает изменения через
+ * setOption. Границы оси и видимая часть задаются абсолютным временем, а не процентами:
+ * при поступлении новых точек процентная прокрутка сместила бы видимую часть.
+ *
+ * Изменение, внесённое через setOption, события datazoom не порождает, поэтому это
+ * событие означает действие пользователя и передаётся странице.
  */
-export function SulfurChart({ pak, lims, pakName, limsName, limit, loading }: Props) {
+export function SulfurChart({
+  pak,
+  lims,
+  pakName,
+  limsName,
+  limit,
+  loading,
+  extent,
+  view,
+  bands,
+  onViewChange,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+  const onViewChangeRef = useRef(onViewChange)
+  onViewChangeRef.current = onViewChange
 
   useEffect(() => {
     if (!containerRef.current) {
       return
     }
-    const chart = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
+    const chart = echarts.init(containerRef.current, undefined, {
+      renderer: 'canvas',
+      locale: 'RU',
+    })
     chartRef.current = chart
 
     chart.setOption({
@@ -54,23 +88,18 @@ export function SulfurChart({ pak, lims, pakName, limsName, limit, loading }: Pr
         splitLine: { lineStyle: { color: '#f0f0f0' } },
       },
       // Прокрутка по оси времени: перетаскивание внутри области графика и отдельная
-      // полоса под ним. Границы задаются в процентах от общего набора точек и по
-      // умолчанию охватывают его целиком — период выбирается календарём, а прокрутка
-      // служит для рассмотрения его частей.
-      //
-      // Колесо мыши изменяет масштаб только вместе с клавишей Ctrl: иначе график
-      // перехватывал бы прокрутку страницы, когда указатель оказывается над ним.
+      // полоса под ним. Колесо мыши изменяет масштаб только вместе с клавишей Ctrl:
+      // иначе график перехватывал бы прокрутку страницы.
       dataZoom: [
         {
           type: 'inside',
           xAxisIndex: 0,
-          start: 0,
-          end: 100,
+          filterMode: 'none',
           zoomOnMouseWheel: 'ctrl',
           moveOnMouseWheel: false,
           moveOnMouseMove: true,
         },
-        { type: 'slider', xAxisIndex: 0, start: 0, end: 100, height: 24, bottom: 12 },
+        { type: 'slider', xAxisIndex: 0, filterMode: 'none', height: 24, bottom: 12 },
       ],
       series: [
         {
@@ -90,6 +119,9 @@ export function SulfurChart({ pak, lims, pakName, limsName, limit, loading }: Pr
             label: { formatter: `Норма ${limit} мг/кг`, position: 'insideEndTop' },
             data: [{ yAxis: limit }],
           },
+          // Полосы фона принадлежат оси времени, но в ECharts область наносится только
+          // рядом; ряд ПАК присутствует всегда, поэтому полосы закреплены за ним.
+          markArea: { silent: true, itemStyle: { color: BAND_COLOR }, data: [] },
         },
         {
           name: limsName,
@@ -103,6 +135,13 @@ export function SulfurChart({ pak, lims, pakName, limsName, limit, loading }: Pr
           data: [],
         },
       ],
+    })
+
+    chart.on('datazoom', () => {
+      const zoom = (chart.getOption().dataZoom as { startValue?: number; endValue?: number }[])[0]
+      if (typeof zoom?.startValue === 'number' && typeof zoom.endValue === 'number') {
+        onViewChangeRef.current([zoom.startValue, zoom.endValue])
+      }
     })
 
     const observer = new ResizeObserver(() => chart.resize())
@@ -123,6 +162,22 @@ export function SulfurChart({ pak, lims, pakName, limsName, limit, loading }: Pr
       ],
     })
   }, [pak, lims, pakName, limsName])
+
+  useEffect(() => {
+    chartRef.current?.setOption({
+      xAxis: { min: extent[0], max: extent[1] },
+      dataZoom: [
+        { startValue: view[0], endValue: view[1] },
+        { startValue: view[0], endValue: view[1] },
+      ],
+      series: [
+        {
+          name: pakName,
+          markArea: { data: bands.map(([start, end]) => [{ xAxis: start }, { xAxis: end }]) },
+        },
+      ],
+    })
+  }, [extent, view, bands, pakName, limit, limsName])
 
   useEffect(() => {
     const chart = chartRef.current

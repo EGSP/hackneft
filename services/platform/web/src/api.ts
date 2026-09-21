@@ -62,6 +62,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+// Время последней записи по всем датчикам. Пусто, если записей нет: сервер отвечает
+// кодом 404, и это не ошибка страницы, а отсутствие данных.
+export async function fetchLatestTimestamp(): Promise<Date | null> {
+  const response = await fetch('/api/sensor-data')
+  if (response.status === 404) {
+    return null
+  }
+  if (!response.ok) {
+    throw new Error(`Ошибка ${response.status}`)
+  }
+  const payload = (await response.json()) as { timestamp: string }
+  return new Date(payload.timestamp)
+}
+
 export function fetchSulfurSettings(): Promise<SulfurSettings> {
   return request<SulfurSettings>('/api/sulfur/settings')
 }
