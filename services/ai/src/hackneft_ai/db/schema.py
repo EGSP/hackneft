@@ -8,6 +8,8 @@ from sqlalchemy import JSON, DateTime, Dialect, ForeignKey, Index, String, Uniqu
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
+from hackneft_common.ai import DEFAULT_MODEL_ALIAS
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -72,6 +74,13 @@ class LlmModelRow(Base):
     """Задаётся при создании и не меняется: запись и модель соответствуют друг другу
     однозначно, и сессия, закреплённая за записью, не может перейти на другую модель без
     явного выбора."""
+    alias: Mapped[str] = mapped_column(
+        String(40), default=DEFAULT_MODEL_ALIAS, server_default=DEFAULT_MODEL_ALIAS
+    )
+    """Синоним модели. Может совпадать у нескольких записей, поэтому не уникален."""
+    problems: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Неполадки записи, найденные проверкой справочника. Пересчитываются при запуске сервиса
+    и при каждом изменении справочника."""
     is_default: Mapped[bool] = mapped_column(default=False)
     supports_tools: Mapped[bool] = mapped_column(default=False)
     supports_reasoning: Mapped[bool] = mapped_column(default=False)

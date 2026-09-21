@@ -54,6 +54,8 @@ from .mcp import (
     UpdateMcpConnectionRequest,
 )
 from .model_profile import (
+    DEFAULT_MODEL_ALIAS,
+    MODEL_ALIAS_PATTERN,
     CreateModelProfileRequest,
     ModelAvailability,
     ModelInUseError,
@@ -111,6 +113,8 @@ __all__ = [
     "McpToolMode",
     "McpToolSnapshot",
     "McpTransport",
+    "DEFAULT_MODEL_ALIAS",
+    "MODEL_ALIAS_PATTERN",
     "ModelAvailability",
     "ModelInUseError",
     "ModelListResponse",

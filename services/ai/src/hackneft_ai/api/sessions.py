@@ -102,8 +102,9 @@ async def send_message(
 ) -> AcceptedResponse:
     """Приём сообщения. Ответ возвращается сразу, а результат приходит событиями журнала.
 
-    Если модели сессии в справочнике нет, сообщение отклоняется с кодом 409 и в журнал не
-    записывается.
+    Если модели сессии нет в справочнике или провайдер её не предоставляет, сообщение
+    записывается в журнал вместе с отказом хода `turn_failed` с причиной `model_missing` либо
+    `model_unavailable`: пользователь видит отказ в диалоге.
     """
     await services.sessions.send(session_id, body.text)
     return AcceptedResponse(accepted=True)
@@ -118,8 +119,9 @@ async def measure_context(session_id: str, services: ServicesDep) -> SessionCont
 
 @router.post("/{session_id}/model", summary="Смена модели сессии", responses=errors(404, 409))
 async def select_model(session_id: str, body: SelectModelRequest, services: ServicesDep) -> Session:
-    """Смена модели сессии. Допустима только когда ход не идёт."""
-    return await services.sessions.select_model(session_id, body.model_id)
+    """Смена модели сессии. Допустима только когда ход не идёт. Модель указывается любой
+    ссылкой: идентификатором записи, идентификатором модели у провайдера либо синонимом."""
+    return await services.sessions.select_model(session_id, body.reference)
 
 
 @router.post("/{session_id}/interrupt", summary="Прерывание хода", responses=errors(404))

@@ -84,6 +84,7 @@ async def start_services(config: AppConfig) -> Services:
     # состоянию сессии устаревшего значения не видят.
     await runner.reconcile_on_startup()
     await models.relink()
+    await models.check_problems()
     availability.start()
 
     return Services(

@@ -49,7 +49,12 @@ from ..core.turn import TurnOptions, TurnResult, run_turn
 from ..db.database import Database
 from ..db.schema import SessionEventRow, SessionRow
 from ..errors import ConflictError, NotFoundError
-from ..models.service import ModelChoice, ModelDirectory
+from ..models.service import (
+    ModelChoice,
+    ModelDirectory,
+    ModelTurnError,
+    ModelUnavailableError,
+)
 from ..providers.base import ChatSettings
 from ..providers.registry import ProviderRegistry
 from ..telemetry.attributes import (
@@ -182,10 +187,15 @@ class AgentRunner:
     async def prepare(self, session_id: str) -> ModelChoice:
         """Модель следующего хода сессии.
 
-        Определяется до любых записей в сессии: при отказе сессия остаётся нетронутой, и
-        повторная отправка не удваивает сообщение в журнале. Модель, назначенная впервые,
-        закрепляется за сессией: иначе смена модели по умолчанию между ходами переводила бы
-        сессию на другую модель без ведома пользователя.
+        Определяется до любых записей в сессии. Модель, назначенная впервые, закрепляется за
+        сессией: иначе смена модели по умолчанию между ходами переводила бы сессию на другую
+        модель без ведома пользователя.
+
+        Отказ из-за модели — `ModelTurnError` — вызывающая сторона записывает в журнал методом
+        `reject`. Модель считается недоступной, если её провайдера нет в справочнике либо
+        перечень провайдера получен и модели в нём нет. Неудачное получение перечня ход не
+        останавливает: оно говорит о состоянии окружения, а не о модели, и настоящий отказ
+        провайдера придёт ответом на обращение к модели.
         """
         async with self._db.read() as session:
             row = await session.get(SessionRow, session_id)
@@ -207,7 +217,30 @@ class AgentRunner:
                         model_identifier=model.identifier,
                     )
                 )
+        if self._providers.get(model.provider) is None:
+            raise ModelUnavailableError(
+                f"Модель «{model.identifier}» недоступна: провайдера «{model.provider}» нет в "
+                "справочнике провайдеров. Добавьте провайдера или выберите для сессии другую "
+                "модель."
+            )
+        if model.availability == "not_listed":
+            raise ModelUnavailableError(
+                f"Модель «{model.identifier}» недоступна: провайдер {model.provider} её не "
+                "предоставляет. Проверьте идентификатор модели или выберите для сессии другую "
+                "модель."
+            )
         return model
+
+    async def reject(self, session_id: str, text: str, error: ModelTurnError) -> None:
+        """Записывает сообщение вместе с отказом хода из-за модели. Ход не запускается, и
+        сессия остаётся в прежнем состоянии. Освобождает сессию, занятую методом `claim`."""
+        try:
+            await self._journal.append(session_id, UserMessageEvent(text=text))
+            await self._journal.append(
+                session_id, TurnFailedEvent(reason=error.reason, message=error.message)
+            )
+        finally:
+            self.release(session_id)
 
     async def submit(self, session_id: str, text: str, model: ModelChoice) -> None:
         """Принимает сообщение и запускает ход чат-сессии. Возвращает управление сразу:
@@ -230,6 +263,10 @@ class AgentRunner:
         """
         try:
             model = await self.prepare(session_id)
+        except ModelTurnError as error:
+            await self.reject(session_id, task, error)
+            await self._journal.settle(session_id, SessionFailedEvent(message=error.message))
+            return
         except Exception as error:
             self.release(session_id)
             await self._journal.settle(session_id, SessionFailedEvent(message=_describe(error)))

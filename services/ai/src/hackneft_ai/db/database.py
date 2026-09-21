@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import event
+from sqlalchemy import Connection, event, inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .schema import Base
@@ -31,6 +31,7 @@ class Database:
     async def create_schema(self) -> None:
         async with self._engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            await connection.run_sync(_add_missing_columns)
 
     @asynccontextmanager
     async def read(self) -> AsyncIterator[AsyncSession]:
@@ -48,6 +49,32 @@ class Database:
 
     async def close(self) -> None:
         await self._engine.dispose()
+
+
+def _add_missing_columns(connection: Connection) -> None:
+    """Добавляет в существующие таблицы столбцы, появившиеся в схеме позже.
+
+    `create_all` создаёт только недостающие таблицы, а в существующие столбцов не добавляет.
+    Поэтому новый столбец обязан иметь строковое значение по умолчанию на стороне базы: им
+    заполняются строки, записанные до его появления.
+    """
+    inspector = inspect(connection)
+    for table in Base.metadata.sorted_tables:
+        present = {column["name"] for column in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present:
+                continue
+            default = getattr(column.server_default, "arg", None)
+            if not isinstance(default, str):
+                raise RuntimeError(
+                    f"Столбец {table.name}.{column.name} нельзя добавить в существующую таблицу: "
+                    "у него нет значения по умолчанию на стороне базы"
+                )
+            column_type = column.type.compile(connection.dialect)
+            connection.exec_driver_sql(
+                f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type} "
+                f"NOT NULL DEFAULT '{default}'"
+            )
 
 
 def _configure_connection(connection: Any, _record: Any) -> None:
