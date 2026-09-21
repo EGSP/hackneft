@@ -20,10 +20,11 @@ from hackneft_common.ai import (
     SessionStatus,
 )
 
+from ..agents.service import AgentDirectory
 from ..db.database import Database
 from ..db.schema import SessionRow, iso
 from ..errors import BadRequestError, ConflictError, NotFoundError
-from ..models.service import ModelChoice, ModelDirectory
+from ..models.service import ModelChoice, ModelDirectory, ModelTurnError
 from .bus import SessionEventBus
 from .journal import SessionJournal
 from .runner import AgentRunner
@@ -38,12 +39,14 @@ class SessionsService:
         bus: SessionEventBus,
         journal: SessionJournal,
         models: ModelDirectory,
+        agents: AgentDirectory,
         runner: AgentRunner,
     ) -> None:
         self._db = db
         self._bus = bus
         self._journal = journal
         self._models = models
+        self._agents = agents
         self._runner = runner
 
     async def list_sessions(self, kind: SessionKind | None = None) -> list[Session]:
@@ -76,14 +79,18 @@ class SessionsService:
             raise BadRequestError("Для агентской сессии обязательна постановка задачи")
         if request.parent_id is not None:
             await self.require(request.parent_id)
+        agent = None if request.agent is None else await self._agents.require(request.agent)
 
         # Модель выбирается до создания записи. Указанная явно должна существовать: подменять
-        # её другой нельзя. Иначе сессия получает модель по умолчанию. Агентская сессия без
-        # модели не создаётся вовсе — исполнить задание ей нечем, — а чат при пустом
-        # справочнике создаётся без модели и получает её первым ходом.
+        # её другой нельзя. Ссылка, в том числе синоним, разрешается здесь один раз, и дальше
+        # сессия закреплена за записью. Иначе сессия получает модель по умолчанию. Агентская
+        # сессия без модели не создаётся вовсе — исполнить задание ей нечем, — а чат при
+        # пустом справочнике создаётся без модели и получает её первым ходом. Модель запроса
+        # важнее модели карточки агента: вызывающая сторона выбрала её явно.
         model: ModelChoice | None
-        if request.model_id is not None:
-            model = await self._models.choice(request.model_id)
+        ref = request.model or request.model_id or (None if agent is None else agent.model)
+        if ref is not None:
+            model = await self._models.resolve(ref)
         elif kind == "agent":
             model = await self._models.require_default()
         else:
@@ -93,6 +100,8 @@ class SessionsService:
             _shorten(request.task or "Задача") if kind == "agent" else _DEFAULT_CHAT_TITLE
         )
 
+        system_prompt = None if agent is None else await self._agents.session_prompt(agent)
+
         async with self._db.write() as tx:
             row = SessionRow(
                 kind=kind,
@@ -101,6 +110,8 @@ class SessionsService:
                 model_id=None if model is None else model.id,
                 model_provider=None if model is None else model.provider,
                 model_identifier=None if model is None else model.identifier,
+                agent_id=None if agent is None else agent.id,
+                system_prompt=system_prompt,
             )
             tx.add(row)
             await tx.flush()
@@ -142,13 +153,19 @@ class SessionsService:
     async def send(self, session_id: str, text: str) -> None:
         """Приём сообщения. Ход запускается фоном и к времени жизни запроса не привязан.
 
-        Модель определяется до любых записей: при отказе ни название, ни журнал сессии не
-        меняются, и повторная отправка того же сообщения не удваивает его в журнале.
+        Модель определяется до запуска хода. Если модели сессии нет в справочнике или
+        провайдер её не предоставляет, сообщение записывается вместе с отказом хода: так
+        пользователь видит причину в диалоге. Прочие отказы журнал не меняют.
         """
         await self.require_idle(session_id)
         self._runner.claim(session_id)
         try:
-            model = await self._runner.prepare(session_id)
+            try:
+                model = await self._runner.prepare(session_id)
+            except ModelTurnError as error:
+                await self._ensure_title(session_id, text)
+                await self._runner.reject(session_id, text, error)
+                return
             await self._ensure_title(session_id, text)
             await self._runner.submit(session_id, text, model)
         except BaseException:
@@ -176,15 +193,15 @@ class SessionsService:
             interrupted = await self._interrupt_tree(child_id) or interrupted
         return await self._runner.interrupt(session_id) or interrupted
 
-    async def select_model(self, session_id: str, model_id: str) -> Session:
-        """Смена модели сессии.
+    async def select_model(self, session_id: str, ref: str) -> Session:
+        """Смена модели сессии по ссылке на модель.
 
         Разрешена только когда ход не идёт: иначе часть шагов была бы выполнена одной моделью,
         а часть другой. Наличие истории смене не мешает: массив сообщений собирается из журнала
         заново на каждый ход, поэтому новая модель получает весь прежний диалог как есть.
         """
         await self.require_idle(session_id)
-        model = await self._models.choice(model_id)
+        model = await self._models.resolve(ref)
         async with self._db.write() as tx:
             await tx.execute(
                 update(SessionRow)
@@ -257,6 +274,7 @@ def _to_session(row: SessionRow) -> Session:
         model_name=row.model_identifier,
         model_provider=row.model_provider,
         parent_id=row.parent_id,
+        agent_id=row.agent_id,
         result=row.result,
         failure_message=row.failure_message,
     )

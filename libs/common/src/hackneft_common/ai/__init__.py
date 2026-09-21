@@ -4,6 +4,13 @@
 snake_case, в JSON — в camelCase.
 """
 
+from .agent import (
+    AGENT_ID_PATTERN,
+    Agent,
+    AgentListResponse,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+)
 from .api import (
     TEXT_MAX_LENGTH,
     AcceptedResponse,
@@ -35,6 +42,13 @@ from .events import (
     TurnFinishedEvent,
     UserMessageEvent,
 )
+from .instruction import (
+    INSTRUCTION_ID_PATTERN,
+    CreateInstructionRequest,
+    Instruction,
+    InstructionListResponse,
+    UpdateInstructionRequest,
+)
 from .mcp import (
     MCP_NAME_PATTERN,
     CreateMcpConnectionRequest,
@@ -54,6 +68,8 @@ from .mcp import (
     UpdateMcpConnectionRequest,
 )
 from .model_profile import (
+    DEFAULT_MODEL_ALIAS,
+    MODEL_ALIAS_PATTERN,
     CreateModelProfileRequest,
     ModelAvailability,
     ModelInUseError,
@@ -95,6 +111,16 @@ __all__ = [
     "ContextItem",
     "ContextSegment",
     "ContextSegmentKey",
+    "AGENT_ID_PATTERN",
+    "Agent",
+    "AgentListResponse",
+    "CreateAgentRequest",
+    "UpdateAgentRequest",
+    "INSTRUCTION_ID_PATTERN",
+    "CreateInstructionRequest",
+    "Instruction",
+    "InstructionListResponse",
+    "UpdateInstructionRequest",
     "CreateMcpConnectionRequest",
     "CreateModelProfileRequest",
     "CreateProviderRequest",
@@ -111,6 +137,8 @@ __all__ = [
     "McpToolMode",
     "McpToolSnapshot",
     "McpTransport",
+    "DEFAULT_MODEL_ALIAS",
+    "MODEL_ALIAS_PATTERN",
     "ModelAvailability",
     "ModelInUseError",
     "ModelListResponse",

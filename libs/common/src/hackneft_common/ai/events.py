@@ -13,9 +13,19 @@ from pydantic import Field, JsonValue, TypeAdapter
 from .base import ApiModel
 from .session import SessionKind
 
-TurnFailureReason = Literal["model_error", "step_limit", "output_limit", "aborted", "internal"]
+TurnFailureReason = Literal[
+    "model_missing",
+    "model_unavailable",
+    "model_error",
+    "step_limit",
+    "output_limit",
+    "aborted",
+    "internal",
+]
 """Исход неудачного хода. Различаются потому, что требуют разной реакции.
 
+`model_missing` — модели сессии нет в справочнике: запись удалена, и нужно выбрать другую
+модель; `model_unavailable` — запись есть, но провайдер модель не предоставляет;
 `model_error` — отказ на стороне провайдера модели; `step_limit` — сработало ограничение
 числа шагов, задача слишком велика для одного хода; `output_limit` — модель израсходовала
 выходной бюджет, не сформировав ответ; `aborted` — прерывание по команде; `internal` — дефект

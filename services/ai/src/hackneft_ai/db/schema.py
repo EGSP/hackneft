@@ -8,6 +8,8 @@ from sqlalchemy import JSON, DateTime, Dialect, ForeignKey, Index, String, Uniqu
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
+from hackneft_common.ai import DEFAULT_MODEL_ALIAS
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -72,6 +74,13 @@ class LlmModelRow(Base):
     """Задаётся при создании и не меняется: запись и модель соответствуют друг другу
     однозначно, и сессия, закреплённая за записью, не может перейти на другую модель без
     явного выбора."""
+    alias: Mapped[str] = mapped_column(
+        String(40), default=DEFAULT_MODEL_ALIAS, server_default=DEFAULT_MODEL_ALIAS
+    )
+    """Синоним модели. Может совпадать у нескольких записей, поэтому не уникален."""
+    problems: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Неполадки записи, найденные проверкой справочника. Пересчитываются при запуске сервиса
+    и при каждом изменении справочника."""
     is_default: Mapped[bool] = mapped_column(default=False)
     supports_tools: Mapped[bool] = mapped_column(default=False)
     supports_reasoning: Mapped[bool] = mapped_column(default=False)
@@ -83,6 +92,38 @@ class LlmModelRow(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (UniqueConstraint("provider", "identifier"),)
+
+
+class InstructionRow(Base):
+    """Справочник инструкций: как действовать в определённой ситуации."""
+
+    __tablename__ = "instructions"
+
+    id: Mapped[str] = mapped_column(String(60), primary_key=True)
+    """Задаётся при создании и не меняется: по нему на инструкцию ссылаются карточки агентов."""
+    title: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
+
+
+class AgentRow(Base):
+    """Справочник агентов: системный промпт и модель сессии."""
+
+    __tablename__ = "agents"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    """Задаётся при создании и не меняется: по нему на карточку ссылаются сессии."""
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(default="")
+    system_prompt: Mapped[str]
+    instructions: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Идентификаторы закреплённых инструкций. Хранятся перечнем, а не связующей таблицей:
+    порядок в нём значим, а размер мал."""
+    model: Mapped[str] = mapped_column(String(300))
+    """Ссылка на модель. Разрешается в запись справочника при создании сессии."""
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
 
 
 class SessionRow(Base):
@@ -113,6 +154,10 @@ class SessionRow(Base):
     """Модель, назначенная сессии. Хранится отдельно от связи: при удалении записи
     справочника связь обнуляется, а отметка остаётся, и по ней ход отличает сессию, чья модель
     удалена, от сессии без модели."""
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"))
+    system_prompt: Mapped[str | None]
+    """Системный промпт карточки агента, скопированный при создании сессии: правка карточки
+    не меняет поведение уже идущих диалогов. Пусто — промпт сервиса по умолчанию."""
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
 

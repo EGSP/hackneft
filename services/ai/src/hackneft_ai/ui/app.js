@@ -1,14 +1,16 @@
 // Страница настроек ИИ-сервиса: вкладки справочников, загрузка данных и сообщения о результате
 // действий. Сами справочники описаны в модулях разделов.
 
+import { agents } from "./agents.js";
 import { api } from "./api.js";
 import { status } from "./dom.js";
+import { instructions } from "./instructions.js";
 import { mcp } from "./mcp.js";
 import { models } from "./models.js";
 import { providers } from "./providers.js";
 import { tools } from "./tools.js";
 
-const SECTIONS = { providers, models, mcp, tools };
+const SECTIONS = { providers, models, agents, instructions, mcp, tools };
 
 const notice = document.getElementById("notice");
 let noticeTimer;
