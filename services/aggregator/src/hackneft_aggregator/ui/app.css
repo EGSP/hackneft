@@ -1,0 +1,102 @@
+/* Дополнения к Vanilla Framework для страницы агрегатора. */
+
+.app-header {
+  border-bottom: 1px solid #d9d9d9;
+}
+
+.app-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.app-header__actions .p-button,
+.app-header__actions [class^="p-button"],
+.app-header__actions [class^="p-status-label"] {
+  margin: 0;
+}
+
+/* Положение курсора — главное значение страницы, поэтому набирается крупно и моноширинно:
+   дата и время читаются посимвольно, и пропорциональный шрифт сбивает их выравнивание. */
+.cursor-value {
+  font-family: var(--vf-font-family-mono, monospace);
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+/* Пары «показатель — значение». Значение стоит в той же строке, что и показатель:
+   значения короткие, и перенос их вниз растянул бы раздел без пользы. */
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 1.5rem;
+  font-size: 0.875rem;
+}
+
+.facts dt {
+  color: #666;
+  margin: 0;
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.toolbar .p-button,
+.toolbar [class^="p-button"] {
+  margin: 0;
+}
+
+.app-controls {
+  border-top: 1px solid #d9d9d9;
+  padding-top: 1.5rem;
+  margin-top: 1rem;
+  width: 100%;
+}
+
+/* Поля настроек стоят в ряд, подпись над полем. Встроенная разметка Vanilla ставит подпись
+   слева от поля, и при трёх полях подписи наезжают друг на друга. */
+.settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1.5rem;
+}
+
+.settings-form .p-form__group {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  min-width: 11rem;
+}
+
+.settings-form label {
+  margin: 0 0 0.25rem;
+  padding: 0;
+  width: auto;
+  font-size: 0.875rem;
+}
+
+.settings-form input {
+  margin: 0;
+  width: 100%;
+}
+
+.settings-form button {
+  margin: 0;
+}
+
+td code {
+  overflow-wrap: anywhere;
+}

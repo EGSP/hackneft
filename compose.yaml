@@ -2,9 +2,16 @@
 #
 #   docker compose up --build
 #
-# Платформа — http://localhost:8000, ИИ-сервис — http://localhost:8100.
+# Платформа — http://localhost:8000, ИИ-сервис — http://localhost:8100,
+# агрегатор — http://localhost:8200.
+#
 # Настройки ИИ-сервиса читаются из services/ai/.env, если файл существует; перечень —
-# в services/ai/.env.example.
+# в services/ai/.env.example. То же правило действует для агрегатора:
+# services/aggregator/.env и services/aggregator/.env.example.
+#
+# Пакет данных телеметрии лежит вне репозитория и пробрасывается агрегатору томом только
+# для чтения. По умолчанию это каталог data на уровень выше корня репозитория; другой путь
+# задаётся переменной HACKNEFT_DATA_DIR.
 
 services:
   ai:
@@ -36,6 +43,35 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  aggregator:
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    env_file:
+      - path: services/aggregator/.env
+        required: false
+    environment:
+      # Внутри сети compose сервисы обращаются друг к другу по имени.
+      PLATFORM_URL: http://platform:8000
+      # Начальное положение курсора по источнику. Действует при первом запуске и при сбросе
+      # курсора из веб-интерфейса; дальше курсор берётся из тома aggregator-state.
+      AGGREGATOR_START_DATE: "2023-01-01T00:00:00"
+      # Интервал опроса и шаг курсора в минутах. Их отношение — коэффициент ускорения
+      # симуляции: при шаге 60 и интервале 1 за минуту реального времени отправляется час
+      # выгрузки. Шаг самой выгрузки — 10 минут.
+      AGGREGATOR_INTERVAL_MINUTES: "10"
+      AGGREGATOR_STEP_MINUTES: "10"
+    ports:
+      - "8200:8200"
+    volumes:
+      - ${HACKNEFT_DATA_DIR:-../data}:/data/source:ro
+      - aggregator-state:/data/state
+    depends_on:
+      platform:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   ai-data:
   platform-data:
+  aggregator-state:
