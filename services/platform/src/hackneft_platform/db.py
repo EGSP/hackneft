@@ -56,21 +56,45 @@ def init_db() -> None:
 
 
 def _seed_sensor_names() -> None:
-    """Заполняет sensor_names исходными кодами датчиков (код как имя самого себя).
+    """Заполняет sensor_names исходными кодами датчиков и их синонимами.
+
+    Каждый код записывается именем самого себя (sensor_code == name), после чего
+    добавляются синонимы из catalog.SENSOR_SYNONYMS. Синонимы, введённые пользователем
+    через интерфейс справочника, этой процедурой не затрагиваются: она касается только
+    имён, перечисленных в каталоге.
+
+    Имя указывает ровно на один датчик, поэтому перед вставкой снимается его прежняя
+    привязка к другому коду. Без этого перенос ряда на новый код (например, показания
+    серы стали приходить от агрегатора под кодом ht_q21 вместо Q21) оставил бы в базе,
+    созданной прежней версией, две строки с одним именем, и выбор ряда зависел бы от
+    порядка строк — см. проверку в api.py:create_sensor_name.
 
     INSERT OR IGNORE — операция идемпотентна: при повторном запуске уже вставленные
-    коды молча пропускаются, ошибок из-за первичного ключа (sensor_code, name) нет.
+    пары молча пропускаются, ошибок из-за первичного ключа (sensor_code, name) нет.
     """
-    from hackneft_platform.catalog import KNOWN_SENSOR_CODES
+    from hackneft_platform.catalog import KNOWN_SENSOR_CODES, SENSOR_SYNONYMS
+
+    pairs = [(code, code) for code in KNOWN_SENSOR_CODES]
+    pairs += [
+        (code, synonym)
+        for code, synonyms in SENSOR_SYNONYMS.items()
+        for synonym in synonyms
+    ]
 
     with engine.begin() as connection:
-        for code in KNOWN_SENSOR_CODES:
+        for code, name in pairs:
+            connection.execute(
+                text(
+                    "DELETE FROM sensor_names WHERE name = :name AND sensor_code <> :code"
+                ),
+                {"code": code, "name": name},
+            )
             connection.execute(
                 text(
                     "INSERT OR IGNORE INTO sensor_names (sensor_code, name) "
-                    "VALUES (:code, :code)"
+                    "VALUES (:code, :name)"
                 ),
-                {"code": code},
+                {"code": code, "name": name},
             )
 
 
