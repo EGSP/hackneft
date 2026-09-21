@@ -1,13 +1,12 @@
-"""Чтение телеметрии из файлов CSV.
+"""Чтение телеметрии и качества из файлов CSV.
 
-Файлы велики (236 и 87 МБ) и построчно упорядочены по времени, поэтому целиком в память они
-не читаются. При запуске каждый файл прочитывается один раз, и от него остаётся указатель:
-отметка времени каждой строки и смещение этой строки в байтах. Дальше окно по времени
+Файлы телеметрии велики (236 и 87 МБ) и построчно упорядочены по времени, поэтому целиком в
+память они не читаются. При запуске каждый файл прочитывается один раз, и от него остаётся
+указатель: отметка времени каждой строки и смещение этой строки в байтах. Дальше окно по времени
 находится двоичным поиском по указателю, а сами значения читаются с нужного смещения.
 
-Указатель нужен потому, что курсор двигается не только вперёд: его можно сбросить к начальной
-дате или перевести на произвольную дату из веб-интерфейса, и последовательного чтения от
-текущего места для этого недостаточно.
+Выгрузки ЛИМС и ПАК после конвертации лежат в длинном формате (`date,tag,value`) и на два
+порядка меньше телеметрии, поэтому читаются в память целиком и отдаются тем же интерфейсом окна.
 """
 
 import csv
@@ -18,7 +17,14 @@ from datetime import datetime
 from math import isfinite
 from pathlib import Path
 
-from .catalog import MISSING_VALUE_CODE, SOURCES, TIMESTAMP_COLUMN, SourceSpec
+from .catalog import (
+    MISSING_VALUE_CODE,
+    SOURCES,
+    TAG_COLUMN,
+    TIMESTAMP_COLUMN,
+    VALUE_COLUMN,
+    SourceSpec,
+)
 
 
 @dataclass(slots=True)
@@ -193,15 +199,143 @@ def _timestamp_of(line: bytes, index: int) -> datetime | None:
         return None
 
 
+class LongCsvSource:
+    """Длинный CSV качества: строка — одно показание (`date,tag,value`).
+
+    Файл целиком помещается в память (сотни тысяч строк против миллионов у телеметрии). Окно
+    по времени находится двоичным поиском по упорядоченному списку отметок.
+    """
+
+    def __init__(self, spec: SourceSpec, path: Path) -> None:
+        self.spec = spec
+        self.path = path
+        self.ready = False
+        self.error: str | None = None
+        self._times: list[datetime] = []
+        self._rows: list[list[Reading]] = []
+        self._sensor_codes: set[str] = set()
+
+    def build_index(self) -> None:
+        try:
+            self._load()
+        except OSError as failure:
+            self.error = f"{type(failure).__name__}: {failure}"
+            self.ready = False
+            return
+        except ValueError as failure:
+            self.error = str(failure)
+            self.ready = False
+            return
+        self.error = None
+        self.ready = True
+
+    def _load(self) -> None:
+        with self.path.open("r", encoding="utf-8", newline="") as text:
+            reader = csv.DictReader(text)
+            if reader.fieldnames is None:
+                raise ValueError("пустой файл")
+            required = {TIMESTAMP_COLUMN, TAG_COLUMN, VALUE_COLUMN}
+            missing = required - set(reader.fieldnames)
+            if missing:
+                raise ValueError(
+                    "в заголовке нет столбцов "
+                    + ", ".join(sorted(missing))
+                )
+
+            buckets: dict[datetime, list[Reading]] = {}
+            codes: set[str] = set()
+            for row in reader:
+                stamp = _parse_iso(row.get(TIMESTAMP_COLUMN, ""))
+                if stamp is None:
+                    continue
+                tag = (row.get(TAG_COLUMN) or "").strip()
+                if tag == "":
+                    continue
+                raw = (row.get(VALUE_COLUMN) or "").strip()
+                if raw == "":
+                    continue
+                try:
+                    value = float(raw)
+                except ValueError:
+                    continue
+                if not isfinite(value):
+                    continue
+                code = self.spec.prefix + tag.lower()
+                reading = Reading(
+                    timestamp=stamp,
+                    sensor_code=code,
+                    value=value,
+                    source=self.spec.origin,
+                )
+                buckets.setdefault(stamp, []).append(reading)
+                codes.add(code)
+
+        times = sorted(buckets)
+        self._times = times
+        self._rows = [buckets[stamp] for stamp in times]
+        self._sensor_codes = codes
+
+    @property
+    def first_timestamp(self) -> datetime | None:
+        return self._times[0] if self._times else None
+
+    @property
+    def last_timestamp(self) -> datetime | None:
+        return self._times[-1] if self._times else None
+
+    def status(self) -> SourceStatus:
+        return SourceStatus(
+            key=self.spec.key,
+            title=self.spec.title,
+            file_name=self.spec.file_name,
+            ready=self.ready,
+            error=self.error,
+            row_count=sum(len(group) for group in self._rows),
+            sensor_count=len(self._sensor_codes),
+            first_timestamp=self.first_timestamp,
+            last_timestamp=self.last_timestamp,
+        )
+
+    def read(self, start: datetime, end: datetime) -> Iterator[Reading]:
+        if not self.ready:
+            return
+        position = bisect_left(self._times, start)
+        for number in range(position, len(self._times)):
+            stamp = self._times[number]
+            if stamp >= end:
+                return
+            yield from self._rows[number]
+
+
+def _parse_iso(raw: str) -> datetime | None:
+    text = raw.strip()
+    if text == "":
+        return None
+    try:
+        return datetime.fromisoformat(text.replace(" ", "T", 1))
+    except ValueError:
+        return None
+
+
+Source = CsvSource | LongCsvSource
+
+
 @dataclass(slots=True)
 class SourceSet:
-    """Все источники телеметрии вместе. Окно по времени читается из каждого из них."""
+    """Все источники вместе. Окно по времени читается из каждого из них."""
 
-    sources: list[CsvSource] = field(default_factory=list)
+    sources: list[Source] = field(default_factory=list)
 
     @classmethod
     def from_directory(cls, directory: Path) -> "SourceSet":
-        return cls([CsvSource(spec, directory / spec.file_name) for spec in SOURCES])
+        items: list[Source] = []
+        for spec in SOURCES:
+            path = directory / spec.file_name
+            if spec.layout == "long":
+                items.append(LongCsvSource(spec, path))
+            else:
+                items.append(CsvSource(spec, path))
+        return cls(items)
 
     def build_index(self) -> None:
         for source in self.sources:
