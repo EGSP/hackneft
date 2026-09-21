@@ -1,1 +1,5 @@
 data/
+node_modules/
+# Каталог статики содержит результат сборки интерфейса (services/platform/web),
+# а не исходный код: он пересоздаётся командой npm run build и в репозиторий не попадает.
+src/hackneft_platform/static/

@@ -9,3 +9,7 @@
 **/data
 .git
 **/*.db
+# Зависимости и результат сборки интерфейса: в образ переносится то, что соберёт
+# ступень web, а не то, что лежит на машине разработчика.
+**/node_modules
+services/platform/src/hackneft_platform/static

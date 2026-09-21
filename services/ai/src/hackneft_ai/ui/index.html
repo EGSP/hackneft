@@ -46,6 +46,16 @@
               </button>
             </div>
             <div class="p-tabs__item">
+              <button class="p-tabs__link" role="tab" data-tab="agents" aria-selected="false">
+                Агенты <span class="count" data-count="agents"></span>
+              </button>
+            </div>
+            <div class="p-tabs__item">
+              <button class="p-tabs__link" role="tab" data-tab="instructions" aria-selected="false">
+                Инструкции <span class="count" data-count="instructions"></span>
+              </button>
+            </div>
+            <div class="p-tabs__item">
               <button class="p-tabs__link" role="tab" data-tab="mcp" aria-selected="false">
                 MCP <span class="count" data-count="mcp"></span>
               </button>
@@ -60,6 +70,8 @@
 
         <section id="providers" role="tabpanel"></section>
         <section id="models" role="tabpanel" hidden></section>
+        <section id="agents" role="tabpanel" hidden></section>
+        <section id="instructions" role="tabpanel" hidden></section>
         <section id="mcp" role="tabpanel" hidden></section>
         <section id="tools" role="tabpanel" hidden></section>
       </div>

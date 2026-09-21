@@ -1,0 +1,3 @@
+node_modules/
+# Кеш инкрементальной сборки TypeScript.
+*.tsbuildinfo

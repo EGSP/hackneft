@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.types import Scope
 
 from .config import AggregatorConfig
@@ -43,11 +43,24 @@ class _RevalidatedFiles(StaticFiles):
         return response
 
 
-class SettingsUpdate(BaseModel):
-    """Изменение настроек темпа. Переданы могут быть оба значения или одно из них."""
+MIN_MINUTES = 0.01
+"""Наименьшее значение интервала и шага — то же, что при разборе переменных окружения."""
 
-    intervalMinutes: float | None = Field(default=None, gt=0)
-    stepMinutes: float | None = Field(default=None, gt=0)
+
+class SettingsUpdate(BaseModel):
+    """Изменение настроек темпа. Переданы могут быть оба значения или одно из них.
+
+    Значение принимается числом либо строкой, в которой дробная часть отделена точкой или
+    запятой: «0,1» — привычная запись дробного числа, и отклонять её незачем.
+    """
+
+    intervalMinutes: float | None = Field(default=None, ge=MIN_MINUTES)
+    stepMinutes: float | None = Field(default=None, ge=MIN_MINUTES)
+
+    @field_validator("intervalMinutes", "stepMinutes", mode="before")
+    @classmethod
+    def _decimal_comma(cls, value: object) -> object:
+        return value.strip().replace(",", ".") if isinstance(value, str) else value
 
 
 class CursorUpdate(BaseModel):

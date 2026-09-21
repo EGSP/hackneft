@@ -54,11 +54,13 @@
           <form id="settings" class="p-form settings-form">
             <div class="p-form__group">
               <label for="interval">Интервал опроса, мин</label>
-              <input id="interval" name="intervalMinutes" type="number" min="0.01" step="0.01" />
+              <input id="interval" name="intervalMinutes" type="text" inputmode="decimal"
+                     autocomplete="off" placeholder="например, 0,1" />
             </div>
             <div class="p-form__group">
               <label for="step">Шаг курсора, мин</label>
-              <input id="step" name="stepMinutes" type="number" min="0.01" step="0.01" />
+              <input id="step" name="stepMinutes" type="text" inputmode="decimal"
+                     autocomplete="off" placeholder="например, 10" />
             </div>
             <button class="p-button--positive" type="submit">Применить темп</button>
           </form>

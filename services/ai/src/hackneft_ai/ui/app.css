@@ -144,3 +144,11 @@ body.is-busy button {
   max-height: 16rem;
   overflow-y: auto;
 }
+
+/* Текст инструкции показывается целиком, с переносами строк: в нём бывают нумерованные
+   перечни. */
+.instruction-text {
+  white-space: pre-line;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}

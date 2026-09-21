@@ -122,17 +122,21 @@ export function checkbox(label, { name, value, checked: isChecked, disabled, hel
  * Редактор пар «ключ — значение»: секреты провайдера, переменные окружения и заголовки MCP.
  * Значение-маска сохраняется как есть: сервис понимает его как «оставить прежнее значение».
  */
-export function keyValueEditor(label, { entries = [], keys = [], help } = {}) {
+export function keyValueEditor(label, { entries = [], keys = [], placeholders = {}, help } = {}) {
   const listId = `k${++uid}`;
   const rows = el("div", { class: "kv-rows" });
   const datalist = el("datalist", { id: listId });
+  const helpText = el("p", { class: "p-form-help-text", hidden: !help }, help ?? "");
+  let hints = placeholders;
 
   function setKeys(known) {
     datalist.replaceChildren(...known.map((key) => el("option", { value: key })));
   }
 
   function addRow(key = "", value = "") {
-    const area = el("textarea", { rows: 1, class: "kv-value", placeholder: "значение", spellcheck: "false" });
+    const area = el("textarea", {
+      rows: 1, class: "kv-value", placeholder: hints[key] ?? "значение", spellcheck: "false",
+    });
     area.value = value;
     const row = el("div", { class: "kv-row" },
       el("input", { type: "text", class: "kv-key", value: key, list: listId, placeholder: "КЛЮЧ", autocomplete: "off" }),
@@ -148,11 +152,26 @@ export function keyValueEditor(label, { entries = [], keys = [], help } = {}) {
     rows,
     datalist,
     button("Добавить ключ", () => addRow()),
-    help ? el("p", { class: "p-form-help-text" }, help) : null);
+    helpText);
 
   return {
     node,
     setKeys,
+    /**
+     * Переход к другому набору ключей: незаполненные строки заменяются предполагаемыми ключами
+     * набора, а заполненные сохраняются — введённое значение не должно пропадать.
+     */
+    useKeys({ initial, all, placeholders: nextHints = {}, help: nextHelp }) {
+      hints = nextHints;
+      setKeys(all);
+      for (const row of [...rows.children]) {
+        if (row.querySelector(".kv-value").value.trim() === "") row.remove();
+      }
+      const present = new Set([...rows.children].map((row) => row.querySelector(".kv-key").value.trim()));
+      initial.filter((key) => !present.has(key)).forEach((key) => addRow(key));
+      helpText.textContent = nextHelp ?? "";
+      helpText.hidden = !nextHelp;
+    },
     value() {
       const result = {};
       for (const row of rows.children) {

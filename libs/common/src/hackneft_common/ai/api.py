@@ -1,6 +1,8 @@
 """Запросы и ответы API сессий."""
 
-from pydantic import ConfigDict, Field
+from typing import Self
+
+from pydantic import ConfigDict, Field, model_validator
 
 from .base import ApiModel
 from .events import SessionEvent
@@ -27,7 +29,15 @@ class CreateSessionRequest(ApiModel):
     tools: list[str] | None = None
     """Имена доступных инструментов. Отсутствие означает весь набор сервиса; перечень сужает
     его, а расширить не может."""
+    agent: str | None = None
+    """Идентификатор карточки агента. Сессия получает её системный промпт и модель; модель,
+    указанная в запросе явно, важнее модели карточки."""
+    model: str | None = Field(default=None, min_length=1, max_length=300)
+    """Модель сессии: идентификатор записи справочника, идентификатор модели у провайдера либо
+    синоним. Ссылка разрешается в запись при создании, и дальше сессия закреплена за ней."""
     model_id: str | None = None
+    """Идентификатор записи справочника. Сохранён ради совместимости: поле `model` принимает
+    его наравне с другими ссылками."""
     traceparent: str | None = Field(default=None, max_length=200)
     """Контекст трассы вызывающей стороны в формате W3C Trace Context."""
 
@@ -37,7 +47,22 @@ class SendMessageRequest(ApiModel):
 
 
 class SelectModelRequest(ApiModel):
-    model_id: str
+    """Смена модели сессии. Указывается одно из полей: `model` принимает любую ссылку на модель,
+    `model_id` — только идентификатор записи и сохранён ради совместимости."""
+
+    model: str | None = Field(default=None, min_length=1, max_length=300)
+    model_id: str | None = None
+
+    @model_validator(mode="after")
+    def _one_reference(self) -> Self:
+        if (self.model is None) == (self.model_id is None):
+            raise ValueError("Укажите ровно одно из полей model и modelId")
+        return self
+
+    @property
+    def reference(self) -> str:
+        """Ссылка на модель из того поля, которое указано."""
+        return self.model or self.model_id or ""
 
 
 class SessionListResponse(ApiModel):

@@ -6,6 +6,17 @@ import {
   toolbar, when,
 } from "./dom.js";
 
+// Синоним: строчные латинские буквы и цифры, группы разделены одиночным дефисом.
+const ALIAS_PATTERN = "[a-z0-9]+(-[a-z0-9]+)*";
+const ALIAS_HELP = "Короткое имя, которое принимается наравне с идентификатором. Может быть общим "
+  + "у нескольких моделей: тогда выбирается модель по умолчанию, затем доступная, затем добавленная раньше.";
+
+function aliasField(value) {
+  return textField("Синоним", {
+    name: "alias", value, required: true, pattern: ALIAS_PATTERN, help: ALIAS_HELP,
+  });
+}
+
 function create(ctx) {
   const providers = ctx.data.providers?.providers ?? [];
   const listId = "provider-models";
@@ -52,6 +63,7 @@ function create(ctx) {
         onchange: (event) => loadCatalog(event.target.value),
       }),
       identifier,
+      aliasField("llm-medium"),
       checkbox("Поддерживает вызов инструментов", { name: "supportsTools", checked: true }),
       checkbox("Возвращает рассуждение", { name: "supportsReasoning" }),
       checkbox("Модель по умолчанию", {
@@ -62,6 +74,7 @@ function create(ctx) {
     submit: (form) => api.post("/models", {
       provider: form.elements.provider.value,
       identifier: form.elements.identifier.value.trim(),
+      alias: form.elements.alias.value.trim(),
       supportsTools: form.elements.supportsTools.checked,
       supportsReasoning: form.elements.supportsReasoning.checked,
       isDefault: form.elements.isDefault.checked || undefined,
@@ -75,6 +88,7 @@ function edit(ctx, model) {
   openDialog({
     title: `Модель «${model.identifier}»`,
     body: [
+      aliasField(model.alias),
       checkbox("Поддерживает вызов инструментов", { name: "supportsTools", checked: model.supportsTools }),
       checkbox("Возвращает рассуждение", { name: "supportsReasoning", checked: model.supportsReasoning }),
       checkbox("Модель по умолчанию", {
@@ -87,6 +101,7 @@ function edit(ctx, model) {
       }),
     ],
     submit: (form) => api.patch(`/models/${model.id}`, {
+      alias: form.elements.alias.value.trim(),
       supportsTools: form.elements.supportsTools.checked,
       supportsReasoning: form.elements.supportsReasoning.checked,
       isDefault: !model.isDefault && form.elements.isDefault.checked ? true : undefined,
@@ -123,11 +138,14 @@ export const models = {
         button("Проверить доступность", () => checkAll(ctx)),
         hasProviders ? null : muted("Сначала добавьте провайдера.")),
       table(
-        ["Модель", "Провайдер", "Возможности", "Доступность", "Идёт ход", ""],
+        ["Модель", "Синоним", "Провайдер", "Возможности", "Доступность", "Идёт ход", ""],
         data.models.map((m) => [
           el("div", {},
             el("code", {}, m.identifier),
-            m.isDefault ? el("div", {}, chip("по умолчанию", "information")) : null),
+            m.isDefault ? el("div", {}, chip("по умолчанию", "information")) : null,
+            m.problems.length > 0 ? el("div", {}, chip("есть неполадки", "caution")) : null,
+            m.problems.map((problem) => el("div", {}, el("small", {}, problem)))),
+          el("code", {}, m.alias),
           m.provider,
           el("div", {},
             m.supportsTools ? chip("инструменты") : null,

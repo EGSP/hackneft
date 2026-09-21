@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
-from .api import mcp, models, providers, sessions
+from .api import agents, instructions, mcp, models, providers, sessions
 from .api.container import start_services, stop_services
 from .api.deps import install_error_handlers
 from .config import AppConfig
@@ -30,13 +30,18 @@ _DESCRIPTION = """
    `GET /api/providers/{provider_id}/models`.
 2. Добавить модель в справочник: `POST /api/models`. Первая добавленная модель становится
    моделью по умолчанию.
-3. Создать сессию: `POST /api/sessions`. Идентификатор сессии возвращается в ответе.
+3. При необходимости добавить карточку агента: `POST /api/agents`. Карточка задаёт
+   системный промпт, закреплённые инструкции из `/api/instructions` и модель сессии. Пустые
+   справочники агентов и инструкций заполняются при запуске значениями по умолчанию.
+4. Создать сессию: `POST /api/sessions`. Идентификатор сессии возвращается в ответе. Поле
+   `agent` создаёт сессию по карточке агента, поле `model` указывает модель идентификатором
+   записи, идентификатором модели у провайдера либо синонимом.
    - `kind: "chat"` — сообщения передаются запросом `POST /api/sessions/{session_id}/messages`,
      число ходов не ограничено.
    - `kind: "agent"` — задача передаётся в поле `task`, ход начинается сразу, сессия
      завершается состоянием `completed` или `failed`. Поле `tools` сужает набор инструментов,
      поле `parentId` делает сессию дочерней.
-4. Читать события журнала: `GET /api/sessions/{session_id}/events?after=<seq>` либо поток
+5. Читать события журнала: `GET /api/sessions/{session_id}/events?after=<seq>` либо поток
    `GET /api/sessions/{session_id}/stream?after=<seq>`. Ответ на сообщение и итог агентской
    сессии приходят событиями, а не в ответе на запрос.
 
@@ -54,6 +59,11 @@ _TAGS = [
         "description": "Справочник провайдеров моделей: Yandex и OpenAI-совместимые",
     },
     {"name": "models", "description": "Справочник моделей и проверка их доступности"},
+    {
+        "name": "agents",
+        "description": "Справочник агентов: системный промпт, инструкции и модель сессии",
+    },
+    {"name": "instructions", "description": "Справочник инструкций для карточек агентов"},
     {"name": "mcp", "description": "Справочник подключений к серверам MCP"},
     {"name": "health", "description": "Служебная проверка"},
 ]
@@ -113,6 +123,8 @@ def create_app(config: AppConfig) -> FastAPI:
     install_error_handlers(app)
     app.include_router(sessions.router)
     app.include_router(models.router)
+    app.include_router(agents.router)
+    app.include_router(instructions.router)
     app.include_router(providers.router)
     app.include_router(mcp.router)
 

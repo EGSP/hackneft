@@ -8,6 +8,22 @@
 #
 # Настройки передаются переменными окружения, перечень — в services/platform/.env.example.
 
+# Интерфейс собирается отдельной ступенью: Node нужен только во время сборки, в готовый
+# образ он не переносится — результатом является набор статических файлов, которые
+# отдаёт сам FastAPI.
+FROM node:22-slim AS web
+
+WORKDIR /web
+
+COPY services/platform/web/package.json services/platform/web/package-lock.json ./
+RUN npm ci
+
+COPY services/platform/web/ ./
+# Значение outDir в vite.config.ts отсчитывается от каталога web, поэтому сборка
+# оказывается в /src/hackneft_platform/static.
+RUN npm run build
+
+
 FROM python:3.12-slim AS build
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.15 /uv /bin/uv
@@ -31,6 +47,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY libs/common/src libs/common/src
 COPY services/platform/src services/platform/src
+# Собранный интерфейс кладётся туда, где его ищет api.py: рядом с исходниками пакета.
+# В репозитории этого каталога нет (см. services/platform/.gitignore).
+COPY --from=web /src/hackneft_platform/static \
+     services/platform/src/hackneft_platform/static
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package hackneft-platform
 
