@@ -1,6 +1,9 @@
-# Запуск всех сервисов из корня репозитория:
+# Запуск всех сервисов из готовых образов Docker Hub (p0lluxstar):
 #
-#   docker compose up --build
+#   docker compose up
+#
+# Образы собираются и публикуются отдельно (docker build + docker push), compose их
+# только скачивает и запускает.
 #
 # Платформа — http://localhost:8000, ИИ-сервис — http://localhost:8100,
 # агрегатор — http://localhost:8200.
@@ -12,12 +15,16 @@
 # Пакет данных телеметрии лежит вне репозитория и пробрасывается агрегатору томом только
 # для чтения. По умолчанию это каталог data на уровень выше корня репозитория; другой путь
 # задаётся переменной HACKNEFT_DATA_DIR.
+#
+# Имя проекта задано явно (name), а не берётся из имени папки: то по умолчанию оставляет
+# только [a-z0-9_-], и запуск из папки с кириллицей или пробелами в имени падает с
+# ошибкой "project name must not be empty".
+
+name: hackneft
 
 services:
   ai:
-    build:
-      context: .
-      dockerfile: services/ai/Dockerfile
+    image: p0lluxstar/hackneft-ai:latest
     env_file:
       - path: services/ai/.env
         required: false
@@ -28,9 +35,7 @@ services:
     restart: unless-stopped
 
   platform:
-    build:
-      context: .
-      dockerfile: services/platform/Dockerfile
+    image: p0lluxstar/hackneft-platform:latest
     environment:
       # Внутри сети compose сервисы обращаются друг к другу по имени.
       AI_SERVICE_URL: http://ai:8100
@@ -44,9 +49,7 @@ services:
     restart: unless-stopped
 
   aggregator:
-    build:
-      context: .
-      dockerfile: services/aggregator/Dockerfile
+    image: p0lluxstar/hackneft-aggregator:latest
     env_file:
       - path: services/aggregator/.env
         required: false
