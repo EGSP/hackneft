@@ -1,9 +1,11 @@
-"""Подписчики двух рядов серы: передача новых показаний в открытые SSE-соединения.
+"""Подписчик двух рядов серы: передача новых показаний в открытые SSE-соединения.
 
-Обработчики зарегистрированы на конкретные коды датчиков (Q21 — поточный анализатор
-ПАК, L21 — лабораторный анализ ЛИМС), а не на все события: главная страница интерфейса
-показывает только эти два ряда, и рассылать ей показания расхода или температуры
-незачем.
+Ряды определяются именами из справочника sensor_names («ПАК» и «ЛИМС»), а не кодами
+датчиков: главная страница запрашивает их по именам, и поток событий обязан отбирать
+показания по тому же признаку. Поэтому обработчик подписан на события всех датчиков и
+сам сверяет код пришедшего показания с кодами, на которые эти имена указывают сейчас.
+Если имя переносится на другой код (сменился источник данных, код получил приставку
+установки), правится строка справочника — ни этот модуль, ни интерфейс не меняются.
 
 Адресатов у подписчика несколько и число их меняется — каждое открытое SSE-соединение
 держит собственную очередь. Соединения регистрируются в `subscribers` эндпоинтом
@@ -12,20 +14,72 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 
-from hackneft_platform.catalog import SULFUR_LIMS_CODE, SULFUR_PAK_CODE
+from sqlalchemy import select
+
+from hackneft_platform.catalog import SULFUR_NAMES
+from hackneft_platform.db import SessionLocal
 from hackneft_platform.events import SensorDataCreated, dispatcher
+from hackneft_platform.models import SensorName
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SulfurReading:
+    """Показание одного из рядов серы вместе с именем ряда.
+
+    Имя добавлено к событию здесь: само событие несёт только код датчика (см. events.py),
+    а получателю потока нужен тот признак, по которому он запрашивал ряды, — имя.
+    """
+
+    event: SensorDataCreated
+    name: str
+
 
 # Очереди открытых SSE-соединений. Множество живёт в памяти процесса, поэтому
 # платформа обязана работать в один рабочий процесс uvicorn: при нескольких процессах
 # событие, опубликованное в одном из них, до соединений остальных не дойдёт.
-subscribers: set[asyncio.Queue[SensorDataCreated]] = set()
+subscribers: set[asyncio.Queue[SulfurReading]] = set()
+
+# Соответствие «имя ряда — код датчика», прочитанное из справочника. Справочник меняется
+# редко, а событие приходит на каждое показание, поэтому соответствие удерживается в
+# памяти; правка справочника сбрасывает его вызовом reset_tracked_codes (см. api.py).
+_tracked_codes: dict[str, str] | None = None
 
 
-def _broadcast(event: SensorDataCreated) -> None:
-    """Кладёт событие в очередь каждого открытого соединения.
+def tracked_codes() -> dict[str, str]:
+    """Коды датчиков, на которые указывают имена рядов серы, по одному на имя."""
+    global _tracked_codes
+    if _tracked_codes is None:
+        with SessionLocal() as session:
+            rows = session.execute(
+                select(SensorName.name, SensorName.sensor_code).where(
+                    SensorName.name.in_(SULFUR_NAMES)
+                )
+            ).all()
+        _tracked_codes = {row.name: row.sensor_code for row in rows}
+
+        missing = [name for name in SULFUR_NAMES if name not in _tracked_codes]
+        if missing:
+            # Отсутствие имени в справочнике не прерывает работу платформы: показания
+            # продолжают сохраняться, но соответствующий ряд в поток не попадает, и
+            # причину такого поведения нужно видеть в журнале.
+            logger.warning(
+                "Имена рядов серы отсутствуют в справочнике: %s", ", ".join(missing)
+            )
+    return _tracked_codes
+
+
+def reset_tracked_codes() -> None:
+    """Сбрасывает запомненное соответствие. Вызывается после правки справочника имён."""
+    global _tracked_codes
+    _tracked_codes = None
+
+
+def _broadcast(reading: SulfurReading) -> None:
+    """Кладёт показание в очередь каждого открытого соединения.
 
     put_nowait, а не await put: обработчик вызывается из фоновой задачи запроса
     на запись показания, и медленный или зависший клиент не должен эту задачу
@@ -35,21 +89,23 @@ def _broadcast(event: SensorDataCreated) -> None:
     """
     for queue in subscribers:
         try:
-            queue.put_nowait(event)
+            queue.put_nowait(reading)
         except asyncio.QueueFull:
             logger.warning(
                 "Очередь SSE-подписчика переполнена, событие %s пропущено",
-                event.event_id,
+                reading.event.event_id,
             )
 
 
-@dispatcher.on(SULFUR_PAK_CODE)
-async def stream_pak_sulfur(event: SensorDataCreated) -> None:
-    """Новое показание поточного анализатора серы (ПАК)."""
-    _broadcast(event)
+@dispatcher.on()
+async def stream_sulfur(event: SensorDataCreated) -> None:
+    """Новое показание серы: поточного анализатора (ПАК) либо лаборатории (ЛИМС).
 
-
-@dispatcher.on(SULFUR_LIMS_CODE)
-async def stream_lims_sulfur(event: SensorDataCreated) -> None:
-    """Новый результат лабораторного анализа серы (ЛИМС)."""
-    _broadcast(event)
+    Подписка оформлена на события всех датчиков, поскольку код отслеживаемого датчика
+    задан не в коде платформы, а справочником имён и потому во время работы известен
+    только из него. Показания остальных датчиков отсеиваются проверкой ниже и до
+    соединений не доходят.
+    """
+    for name, code in tracked_codes().items():
+        if code == event.sensor_code:
+            _broadcast(SulfurReading(event=event, name=name))

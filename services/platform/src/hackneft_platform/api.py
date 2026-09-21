@@ -16,12 +16,17 @@ from sqlalchemy.orm import Session
 from hackneft_platform import handlers  # noqa: F401  (регистрирует обработчиков событий)
 from hackneft_platform.catalog import (
     SULFUR_LIMIT_MG_KG,
-    SULFUR_LIMS_CODE,
-    SULFUR_PAK_CODE,
+    SULFUR_LIMS_NAME,
+    SULFUR_NAMES,
+    SULFUR_PAK_NAME,
 )
 from hackneft_platform.db import get_db, init_db
 from hackneft_platform.events import SensorDataCreated, dispatcher
-from hackneft_platform.handlers.sulfur_stream import subscribers
+from hackneft_platform.handlers.sulfur_stream import (
+    SulfurReading,
+    reset_tracked_codes,
+    subscribers,
+)
 from hackneft_platform.models import SensorData, SensorName, sensor_query
 
 # Асинхронный контекстный менеджер жизненного цикла приложения:
@@ -342,6 +347,9 @@ class SensorNameItem(BaseModel):
     sensor_code: str
     name: str
     is_code: bool
+    # Имя, по которому главная страница запрашивает ряд серы. Такое имя тоже защищено
+    # от удаления, поэтому интерфейс обозначает его и не предлагает кнопку удаления.
+    in_use: bool
 
 
 class SensorNameListResponse(BaseModel):
@@ -367,6 +375,7 @@ def list_sensor_names(db: Session = db_dependency) -> SensorNameListResponse:
                 sensor_code=row.sensor_code,
                 name=row.name,
                 is_code=row.sensor_code == row.name,
+                in_use=row.name in SULFUR_NAMES,
             )
             for row in rows
         ]
@@ -395,6 +404,29 @@ def create_sensor_name(
     if known is None:
         raise HTTPException(status_code=404, detail=f"Датчик {code} не зарегистрирован")
 
+    # Имя указывает ровно на один датчик. Иначе запрос ряда по имени стал бы
+    # двусмысленным: и выборка за период, и подписчик потока разрешают имя в один код,
+    # и при двух привязках выбор зависел бы от порядка строк в справочнике. Поэтому
+    # имя, уже принадлежащее другому датчику, переносится, а не добавляется вторым.
+    # Так же выполняется и смена источника ряда на главной странице: имя «ПАК» или
+    # «ЛИМС» переносится на новый код, удалять его при этом не требуется (ниже, в
+    # delete_sensor_name, удаление таких имён отклоняется).
+    taken = db.scalar(select(SensorName).where(SensorName.name == name))
+    if taken is not None:
+        if taken.sensor_code == code:
+            raise HTTPException(
+                status_code=409, detail=f"Синоним {name} у датчика {code} уже есть"
+            )
+        if taken.sensor_code == taken.name:
+            # Строка, где имя совпадает с кодом, обозначает сам датчик: перенести её
+            # означало бы переименовать датчик, а справочник имён для этого не служит.
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name} — код другого датчика, синонимом он быть не может",
+            )
+        db.delete(taken)
+        db.flush()
+
     db.add(SensorName(sensor_code=code, name=name))
     try:
         db.commit()
@@ -404,7 +436,14 @@ def create_sensor_name(
             status_code=409, detail=f"Синоним {name} у датчика {code} уже есть"
         ) from None
 
-    return SensorNameItem(sensor_code=code, name=name, is_code=code == name)
+    # Подписчик потока держит соответствие «имя ряда — код датчика» в памяти. Новая
+    # строка справочника может переносить имя ряда на другой датчик, поэтому запомненное
+    # соответствие после правки недействительно.
+    reset_tracked_codes()
+
+    return SensorNameItem(
+        sensor_code=code, name=name, is_code=code == name, in_use=name in SULFUR_NAMES
+    )
 
 
 @app.delete("/api/sensor-names", status_code=204)
@@ -419,6 +458,16 @@ def delete_sensor_name(
             detail="Имя, совпадающее с кодом датчика, удалить нельзя: оно обозначает сам датчик",
         )
 
+    # Имена рядов серы удалению не подлежат по той же причине: по ним главная страница
+    # запрашивает измерения и подписывает ряды, и без строки справочника имя перестаёт
+    # разрешаться в код датчика. Перенести ряд на другой датчик можно, добавив это имя
+    # нужному коду, а не удалив прежнюю строку.
+    if name in SULFUR_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Имя {name} используется главной страницей и удалению не подлежит",
+        )
+
     existing = db.scalar(
         select(SensorName).where(
             SensorName.sensor_code == sensor_code, SensorName.name == name
@@ -429,39 +478,48 @@ def delete_sensor_name(
 
     db.delete(existing)
     db.commit()
+    reset_tracked_codes()
 
     return Response(status_code=204)
 
 
-# Параметры главной страницы: коды двух рядов серы и норма. Отдаются интерфейсу, чтобы
+# Параметры главной страницы: имена двух рядов серы и норма. Отдаются интерфейсу, чтобы
 # он не повторял у себя значения, объявленные в catalog.py.
+#
+# Отдаются именно имена из справочника sensor_names, а не коды датчиков: страница и
+# запрашивает ряды по именам (/api/sensor-data/view), и подписывает их этими же именами
+# на графике. Код датчика, стоящий за именем, интерфейсу не нужен и ему не сообщается —
+# соответствие «имя — код» целиком остаётся делом справочника.
 
 
 class SulfurSettingsResponse(BaseModel):
-    pak_code: str
-    lims_code: str
+    pak_name: str
+    lims_name: str
     limit: float
 
 
 @app.get("/api/sulfur/settings", response_model=SulfurSettingsResponse)
 def get_sulfur_settings() -> SulfurSettingsResponse:
     return SulfurSettingsResponse(
-        pak_code=SULFUR_PAK_CODE,
-        lims_code=SULFUR_LIMS_CODE,
+        pak_name=SULFUR_PAK_NAME,
+        lims_name=SULFUR_LIMS_NAME,
         limit=SULFUR_LIMIT_MG_KG,
     )
 
 
 # Поток событий SSE. Соединение регистрирует собственную очередь в множестве
 # подписчиков (handlers/sulfur_stream.py) и удаляет её при разрыве. В поток попадают
-# только показания серы: обработчики подписаны на коды Q21 и L21, а не на все события.
+# только показания серы: подписчик отбирает их по именам рядов из справочника. Вместе
+# с полями события передаётся поле `name` — имя ряда, к которому показание относится.
+# Получатель раскладывает поток на ряды по нему, а не по коду датчика: по именам он
+# запрашивал и саму выборку за период.
 
 STREAM_KEEPALIVE_SECONDS = 15
 
 
 @app.get("/api/stream")
 async def stream_sensor_events(request: Request) -> StreamingResponse:
-    queue: asyncio.Queue[SensorDataCreated] = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue[SulfurReading] = asyncio.Queue(maxsize=100)
     subscribers.add(queue)
 
     async def events() -> AsyncIterator[str]:
@@ -470,7 +528,7 @@ async def stream_sensor_events(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.wait_for(
+                    reading = await asyncio.wait_for(
                         queue.get(), timeout=STREAM_KEEPALIVE_SECONDS
                     )
                 except TimeoutError:
@@ -479,8 +537,9 @@ async def stream_sensor_events(request: Request) -> StreamingResponse:
                     yield ": keep-alive\n\n"
                     continue
 
-                payload = asdict(event)
-                payload["timestamp"] = event.timestamp.isoformat()
+                payload = asdict(reading.event)
+                payload["timestamp"] = reading.event.timestamp.isoformat()
+                payload["name"] = reading.name
                 yield "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
         finally:
             subscribers.discard(queue)

@@ -6,6 +6,10 @@ export type SulfurPoint = [number, number]
 interface Props {
   pak: SulfurPoint[]
   lims: SulfurPoint[]
+  // Подписи рядов — те же имена из справочника, по которым ряды запрошены у платформы
+  // (см. Dashboard). Собственных названий график не хранит.
+  pakName: string
+  limsName: string
   limit: number
   loading: boolean
 }
@@ -21,7 +25,7 @@ const LIMIT_COLOR = '#cf1322'
  * setOption с параметром notMerge=false: полная пересборка сбрасывала бы положение
  * прокрутки, а оно меняется пользователем и обновлением данных затрагиваться не должно.
  */
-export function SulfurChart({ pak, lims, limit, loading }: Props) {
+export function SulfurChart({ pak, lims, pakName, limsName, limit, loading }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
@@ -35,7 +39,7 @@ export function SulfurChart({ pak, lims, limit, loading }: Props) {
     chart.setOption({
       animation: false,
       grid: { left: 56, right: 24, top: 44, bottom: 64 },
-      legend: { data: ['ПАК', 'ЛИМС', 'Норма 10 мг/кг'], top: 8 },
+      legend: { data: [pakName, limsName], top: 8 },
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross' },
@@ -70,7 +74,7 @@ export function SulfurChart({ pak, lims, limit, loading }: Props) {
       ],
       series: [
         {
-          name: 'ПАК',
+          name: pakName,
           type: 'line',
           showSymbol: false,
           smooth: false,
@@ -88,7 +92,7 @@ export function SulfurChart({ pak, lims, limit, loading }: Props) {
           },
         },
         {
-          name: 'ЛИМС',
+          name: limsName,
           type: 'line',
           // Лабораторные анализы выполняются раз в несколько часов, поэтому точки
           // показываются явно: без них редкий ряд выглядит как ломаная без измерений.
@@ -109,13 +113,16 @@ export function SulfurChart({ pak, lims, limit, loading }: Props) {
       chart.dispose()
       chartRef.current = null
     }
-  }, [limit])
+  }, [limit, pakName, limsName])
 
   useEffect(() => {
     chartRef.current?.setOption({
-      series: [{ name: 'ПАК', data: pak }, { name: 'ЛИМС', data: lims }],
+      series: [
+        { name: pakName, data: pak },
+        { name: limsName, data: lims },
+      ],
     })
-  }, [pak, lims])
+  }, [pak, lims, pakName, limsName])
 
   useEffect(() => {
     const chart = chartRef.current

@@ -14,15 +14,22 @@ export interface SensorNameItem {
   sensor_code: string
   name: string
   is_code: boolean
+  // Имя, по которому главная страница запрашивает ряд серы: сервер отклоняет его
+  // удаление, поэтому кнопка удаления для такой строки не показывается.
+  in_use: boolean
 }
 
+// Параметры главной страницы. Ряды задаются именами из справочника, а не кодами
+// датчиков: по имени выполняется и выборка за период, и разбор потока событий, и
+// подпись ряда на графике.
 export interface SulfurSettings {
-  pak_code: string
-  lims_code: string
+  pak_name: string
+  lims_name: string
   limit: number
 }
 
-// Событие потока SSE: поля совпадают с dataclass SensorDataCreated (events.py).
+// Событие потока SSE: поля dataclass SensorDataCreated (events.py) и добавленное
+// сервером имя ряда, к которому относится показание (handlers/sulfur_stream.py).
 export interface SensorEvent {
   event_id: string
   data_id: number
@@ -30,6 +37,7 @@ export interface SensorEvent {
   sensor_code: string
   value: number
   source: string
+  name: string
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

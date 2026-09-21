@@ -32,12 +32,15 @@ function isLiveRange(end: Dayjs): boolean {
   return end.isAfter(dayjs().subtract(LIVE_TOLERANCE_MINUTES, 'minute'))
 }
 
+// Ряд отбирается по имени, под которым он запрошен (поле requested_name ответа), а не
+// по коду датчика: страница знает ряды только по именам из справочника, и какой код за
+// именем стоит, ей несущественно.
 function toPoints(
-  items: { timestamp: string; value: number; sensor_code: string }[],
-  code: string,
+  items: { timestamp: string; value: number; requested_name: string }[],
+  name: string,
 ): SulfurPoint[] {
   return items
-    .filter((item) => item.sensor_code === code)
+    .filter((item) => item.requested_name === name)
     .map((item) => [new Date(item.timestamp).getTime(), item.value] as SulfurPoint)
 }
 
@@ -76,12 +79,12 @@ export function Dashboard() {
     setLoading(true)
     try {
       const items = await fetchSensorView(
-        [settings.pak_code, settings.lims_code],
+        [settings.pak_name, settings.lims_name],
         range[0].toDate(),
         range[1].toDate(),
       )
-      setPak(toPoints(items, settings.pak_code))
-      setLims(toPoints(items, settings.lims_code))
+      setPak(toPoints(items, settings.pak_name))
+      setLims(toPoints(items, settings.lims_name))
       setError(null)
     } catch (reason) {
       setError((reason as Error).message)
@@ -112,10 +115,12 @@ export function Dashboard() {
         return
       }
 
+      // Событие потока несёт имя ряда, определённое сервером по справочнику, поэтому
+      // здесь сравниваются имена — так же, как при выборке за период.
       const point: SulfurPoint = [moment, event.value]
-      if (event.sensor_code === settings.pak_code) {
+      if (event.name === settings.pak_name) {
         setPak((points) => insertPoint(points, point))
-      } else if (event.sensor_code === settings.lims_code) {
+      } else if (event.name === settings.lims_name) {
         setLims((points) => insertPoint(points, point))
       }
     },
@@ -127,6 +132,9 @@ export function Dashboard() {
   const lastPak = pak.length > 0 ? pak[pak.length - 1][1] : null
   const lastLims = lims.length > 0 ? lims[lims.length - 1][1] : null
   const limit = settings?.limit ?? 10
+  // Пока параметры не получены, ряды пусты, и имена нужны только для подписей.
+  const pakName = settings?.pak_name ?? 'ПАК'
+  const limsName = settings?.lims_name ?? 'ЛИМС'
 
   const exceedances = useMemo(
     () => pak.filter(([, value]) => value > limit).length,
@@ -183,7 +191,7 @@ export function Dashboard() {
         <Col xs={24} sm={8}>
           <Card>
             <Statistic
-              title="Последнее показание ПАК"
+              title={`Последнее показание: ${pakName}`}
               value={lastPak ?? '—'}
               precision={lastPak === null ? undefined : 2}
               suffix={lastPak === null ? '' : 'мг/кг'}
@@ -194,7 +202,7 @@ export function Dashboard() {
         <Col xs={24} sm={8}>
           <Card>
             <Statistic
-              title="Последний анализ ЛИМС"
+              title={`Последний анализ: ${limsName}`}
               value={lastLims ?? '—'}
               precision={lastLims === null ? undefined : 2}
               suffix={lastLims === null ? '' : 'мг/кг'}
@@ -205,7 +213,7 @@ export function Dashboard() {
         <Col xs={24} sm={8}>
           <Card>
             <Statistic
-              title={`Превышений нормы ${limit} мг/кг (ПАК)`}
+              title={`Превышений нормы ${limit} мг/кг (${pakName})`}
               value={exceedances}
               suffix={`из ${pak.length}`}
             />
@@ -214,7 +222,14 @@ export function Dashboard() {
       </Row>
 
       <Card>
-        <SulfurChart pak={pak} lims={lims} limit={limit} loading={loading} />
+        <SulfurChart
+          pak={pak}
+          lims={lims}
+          pakName={pakName}
+          limsName={limsName}
+          limit={limit}
+          loading={loading}
+        />
       </Card>
     </Space>
   )

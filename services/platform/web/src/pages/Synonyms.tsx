@@ -31,6 +31,8 @@ interface FormValues {
  *
  * Имя, совпадающее с кодом, обозначает сам датчик и удалению не подлежит — сервер
  * такое обращение отклоняет, поэтому кнопка удаления для таких строк не показывается.
+ * То же относится к именам, по которым главная страница запрашивает ряды серы: сервер
+ * отмечает их признаком in_use.
  */
 export function Synonyms() {
   const [items, setItems] = useState<SensorNameItem[]>([])
@@ -149,6 +151,11 @@ export function Synonyms() {
                   <Typography.Text strong>{name}</Typography.Text>
                   <Tag>код датчика</Tag>
                 </Space>
+              ) : item.in_use ? (
+                <Space>
+                  {name}
+                  <Tag color="blue">главная страница</Tag>
+                </Space>
               ) : (
                 name
               ),
@@ -157,7 +164,7 @@ export function Synonyms() {
             title: '',
             width: 120,
             render: (_, item) =>
-              item.is_code ? null : (
+              item.is_code || item.in_use ? null : (
                 <Popconfirm
                   title="Удалить синоним?"
                   okText="Удалить"
