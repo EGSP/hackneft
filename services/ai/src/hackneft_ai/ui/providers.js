@@ -6,57 +6,78 @@ import {
   status, table, textField, toolbar,
 } from "./dom.js";
 
+const DEFAULT_TYPE = "openai_compatible";
+
 const TYPES = [
+  ["openai_compatible", "Локальный OpenAI-совместимый (vLLM, Ollama, LM Studio)"],
   ["yandex", "Yandex AI Studio"],
-  ["openai_compatible", "OpenAI-совместимый (vLLM, Ollama)"],
 ];
 
-/** Допустимые ключи секретов по типу; первые в списке предлагаются новой карточке. */
-const KEYS = {
+const MASK_HELP = "Значение «••••••» оставляет прежний секрет.";
+
+/**
+ * Секреты по типу провайдера: ключи, которые предлагаются новой карточке (`initial`), все
+ * допустимые ключи (`all`), подсказки к значениям и пояснение под списком.
+ */
+const SECRETS = {
+  openai_compatible: {
+    initial: ["OPENAI_BASE_URL", "OPENAI_API_KEY"],
+    all: ["OPENAI_BASE_URL", "OPENAI_API_KEY"],
+    placeholders: {
+      OPENAI_BASE_URL: "http://host.docker.internal:11434/v1",
+      OPENAI_API_KEY: "необязательно, если сервер не требует ключа",
+    },
+    help: "Обязателен OPENAI_BASE_URL — адрес API сервера моделей с суффиксом /v1. Если ИИ-сервис "
+      + "запущен в Docker, а сервер моделей — на этой же машине, вместо localhost указывается "
+      + `host.docker.internal. ${MASK_HELP}`,
+  },
   yandex: {
     initial: ["YANDEX_FOLDER_ID", "YANDEX_KEY_ID", "YANDEX_SERVICE_ACCOUNT_ID", "YANDEX_PRIVATE_KEY"],
     all: ["YANDEX_FOLDER_ID", "YANDEX_KEY_ID", "YANDEX_SERVICE_ACCOUNT_ID", "YANDEX_PRIVATE_KEY",
       "YANDEX_IAM_TOKEN", "YANDEX_BASE_URL"],
-  },
-  openai_compatible: {
-    initial: ["OPENAI_BASE_URL", "OPENAI_API_KEY"],
-    all: ["OPENAI_BASE_URL", "OPENAI_API_KEY"],
+    placeholders: {
+      YANDEX_FOLDER_ID: "идентификатор каталога",
+      YANDEX_KEY_ID: "идентификатор авторизованного ключа",
+      YANDEX_SERVICE_ACCOUNT_ID: "идентификатор сервисного аккаунта",
+      YANDEX_PRIVATE_KEY: "закрытый ключ целиком, с переносами строк",
+      YANDEX_IAM_TOKEN: "готовый IAM-токен вместо ключа сервисного аккаунта",
+    },
+    help: "Обязателен YANDEX_FOLDER_ID и ключ сервисного аккаунта либо YANDEX_IAM_TOKEN. "
+      + `Закрытый ключ вставляется целиком, с переносами строк. ${MASK_HELP}`,
   },
 };
 
-const SECRETS_HELP =
-  "Ключи те же, что в env-файле. Yandex: обязателен YANDEX_FOLDER_ID и ключ сервисного " +
-  "аккаунта либо YANDEX_IAM_TOKEN. OpenAI-совместимый: обязателен OPENAI_BASE_URL. " +
-  "Закрытый ключ вставляется целиком, с переносами строк. Значение «••••••» оставляет " +
-  "прежний секрет.";
-
+// Тип указывается первым: от него зависят предлагаемые ключи секретов.
 function providerForm(provider) {
-  const type = provider?.type ?? "yandex";
+  const type = provider?.type ?? DEFAULT_TYPE;
   const secrets = keyValueEditor("Секреты", {
     entries: provider
       ? Object.entries(provider.secrets)
-      : KEYS[type].initial.map((key) => [key, ""]),
-    keys: KEYS[type].all,
-    help: SECRETS_HELP,
+      : SECRETS[type].initial.map((key) => [key, ""]),
+    keys: SECRETS[type].all,
+    placeholders: SECRETS[type].placeholders,
+    help: SECRETS[type].help,
   });
   const body = [
+    selectField("Тип", {
+      name: "type",
+      value: type,
+      options: TYPES,
+      onchange: (event) => secrets.useKeys(SECRETS[event.target.value]),
+    }),
     textField("Имя", {
       name: "name",
       value: provider?.name ?? "",
       required: !provider,
       readonly: Boolean(provider),
       pattern: "[a-z][a-z0-9_\\-]{0,39}",
-      placeholder: "yandex",
+      placeholder: "local-llm",
       help: provider
         ? "Имя не меняется: по нему на карточку ссылаются модели."
         : "Латиница в нижнем регистре, цифры, «_» и «-». После создания не меняется.",
     }),
-    textField("Название", { name: "title", value: provider?.title ?? "", placeholder: "Яндекс" }),
-    selectField("Тип", {
-      name: "type",
-      value: type,
-      options: TYPES,
-      onchange: (event) => secrets.setKeys(KEYS[event.target.value].all),
+    textField("Название", {
+      name: "title", value: provider?.title ?? "", placeholder: "Локальный сервер моделей",
     }),
     secrets.node,
   ];

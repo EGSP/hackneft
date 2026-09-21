@@ -42,8 +42,16 @@ _TASK = (
 )
 
 
-def system_prompt(mode: CompletionMode) -> str:
-    return " ".join((*_COMMON, *(_CHAT if mode == "chat" else _TASK)))
+def system_prompt(mode: CompletionMode, custom: str | None = None) -> str:
+    """Системный промпт хода.
+
+    Промпт карточки агента заменяет общие указания сервиса, но не указания о завершении хода:
+    без них модель не знает, как объявить итог, и ход не закончится.
+    """
+    completion = " ".join(_CHAT if mode == "chat" else _TASK)
+    if custom is None or custom.strip() == "":
+        return f"{' '.join(_COMMON)} {completion}"
+    return f"{custom.strip()}\n\n{completion}"
 
 
 def with_sections(base: str, sections: Sequence[str]) -> str:
