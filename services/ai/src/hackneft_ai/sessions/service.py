@@ -20,6 +20,7 @@ from hackneft_common.ai import (
     SessionStatus,
 )
 
+from ..agents.service import AgentDirectory
 from ..db.database import Database
 from ..db.schema import SessionRow, iso
 from ..errors import BadRequestError, ConflictError, NotFoundError
@@ -38,12 +39,14 @@ class SessionsService:
         bus: SessionEventBus,
         journal: SessionJournal,
         models: ModelDirectory,
+        agents: AgentDirectory,
         runner: AgentRunner,
     ) -> None:
         self._db = db
         self._bus = bus
         self._journal = journal
         self._models = models
+        self._agents = agents
         self._runner = runner
 
     async def list_sessions(self, kind: SessionKind | None = None) -> list[Session]:
@@ -76,14 +79,16 @@ class SessionsService:
             raise BadRequestError("Для агентской сессии обязательна постановка задачи")
         if request.parent_id is not None:
             await self.require(request.parent_id)
+        agent = None if request.agent is None else await self._agents.require(request.agent)
 
         # Модель выбирается до создания записи. Указанная явно должна существовать: подменять
         # её другой нельзя. Ссылка, в том числе синоним, разрешается здесь один раз, и дальше
         # сессия закреплена за записью. Иначе сессия получает модель по умолчанию. Агентская
         # сессия без модели не создаётся вовсе — исполнить задание ей нечем, — а чат при
-        # пустом справочнике создаётся без модели и получает её первым ходом.
+        # пустом справочнике создаётся без модели и получает её первым ходом. Модель запроса
+        # важнее модели карточки агента: вызывающая сторона выбрала её явно.
         model: ModelChoice | None
-        ref = request.model if request.model is not None else request.model_id
+        ref = request.model or request.model_id or (None if agent is None else agent.model)
         if ref is not None:
             model = await self._models.resolve(ref)
         elif kind == "agent":
@@ -95,6 +100,8 @@ class SessionsService:
             _shorten(request.task or "Задача") if kind == "agent" else _DEFAULT_CHAT_TITLE
         )
 
+        system_prompt = None if agent is None else await self._agents.session_prompt(agent)
+
         async with self._db.write() as tx:
             row = SessionRow(
                 kind=kind,
@@ -103,6 +110,8 @@ class SessionsService:
                 model_id=None if model is None else model.id,
                 model_provider=None if model is None else model.provider,
                 model_identifier=None if model is None else model.identifier,
+                agent_id=None if agent is None else agent.id,
+                system_prompt=system_prompt,
             )
             tx.add(row)
             await tx.flush()
@@ -265,6 +274,7 @@ def _to_session(row: SessionRow) -> Session:
         model_name=row.model_identifier,
         model_provider=row.model_provider,
         parent_id=row.parent_id,
+        agent_id=row.agent_id,
         result=row.result,
         failure_message=row.failure_message,
     )

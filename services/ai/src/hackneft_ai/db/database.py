@@ -55,8 +55,10 @@ def _add_missing_columns(connection: Connection) -> None:
     """Добавляет в существующие таблицы столбцы, появившиеся в схеме позже.
 
     `create_all` создаёт только недостающие таблицы, а в существующие столбцов не добавляет.
-    Поэтому новый столбец обязан иметь строковое значение по умолчанию на стороне базы: им
-    заполняются строки, записанные до его появления.
+    Поэтому новый столбец обязан допускать пустое значение либо иметь строковое значение по
+    умолчанию на стороне базы: им заполняются строки, записанные до его появления. Внешний
+    ключ у добавленного столбца не объявляется, поэтому действие при удалении связанной
+    записи служба выполняет сама.
     """
     inspector = inspect(connection)
     for table in Base.metadata.sorted_tables:
@@ -64,17 +66,18 @@ def _add_missing_columns(connection: Connection) -> None:
         for column in table.columns:
             if column.name in present:
                 continue
+            column_type = column.type.compile(connection.dialect)
+            ddl = f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type}"
             default = getattr(column.server_default, "arg", None)
+            if column.nullable and default is None:
+                connection.exec_driver_sql(ddl)
+                continue
             if not isinstance(default, str):
                 raise RuntimeError(
                     f"Столбец {table.name}.{column.name} нельзя добавить в существующую таблицу: "
                     "у него нет значения по умолчанию на стороне базы"
                 )
-            column_type = column.type.compile(connection.dialect)
-            connection.exec_driver_sql(
-                f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type} "
-                f"NOT NULL DEFAULT '{default}'"
-            )
+            connection.exec_driver_sql(f"{ddl} NOT NULL DEFAULT '{default}'")
 
 
 def _configure_connection(connection: Any, _record: Any) -> None:

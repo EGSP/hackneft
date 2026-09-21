@@ -5,8 +5,11 @@ from dataclasses import dataclass
 
 import httpx2
 
+from ..agents.seed import seed_defaults
+from ..agents.service import AgentDirectory
 from ..config import AppConfig
 from ..db.database import Database
+from ..instructions.service import InstructionDirectory
 from ..mcp.client import McpClient
 from ..mcp.directory import McpDirectory
 from ..models.service import ModelDirectory
@@ -37,6 +40,8 @@ class Services:
     providers: ProviderDirectory
     availability: ModelAvailabilityChecker
     models: ModelDirectory
+    instructions: InstructionDirectory
+    agents: AgentDirectory
     mcp: McpDirectory
     tools: ToolsFactory
     runner: AgentRunner
@@ -64,6 +69,8 @@ async def start_services(config: AppConfig) -> Services:
     journal = SessionJournal(db, bus)
     snapshots = RequestSnapshotStore(db)
     models = ModelDirectory(db, registry, availability)
+    instructions = InstructionDirectory(db)
+    agents = AgentDirectory(db, instructions)
     mcp_client = McpClient(config.mcp)
     mcp = McpDirectory(db, mcp_client)
     tools = ToolsFactory(config.mcp, NotesTools(db), mcp, mcp_client)
@@ -78,13 +85,14 @@ async def start_services(config: AppConfig) -> Services:
         agent=config.agent,
         tracing=config.tracing,
     )
-    sessions = SessionsService(db, bus, journal, models, runner)
+    sessions = SessionsService(db, bus, journal, models, agents, runner)
 
     # Сверка выполняется до того, как сервис начинает принимать запросы: проверки по
     # состоянию сессии устаревшего значения не видят.
     await runner.reconcile_on_startup()
     await models.relink()
     await models.check_problems()
+    await seed_defaults(agents, instructions)
     availability.start()
 
     return Services(
@@ -98,6 +106,8 @@ async def start_services(config: AppConfig) -> Services:
         providers=providers,
         availability=availability,
         models=models,
+        instructions=instructions,
+        agents=agents,
         mcp=mcp,
         tools=tools,
         runner=runner,

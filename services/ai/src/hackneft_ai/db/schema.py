@@ -94,6 +94,38 @@ class LlmModelRow(Base):
     __table_args__ = (UniqueConstraint("provider", "identifier"),)
 
 
+class InstructionRow(Base):
+    """Справочник инструкций: как действовать в определённой ситуации."""
+
+    __tablename__ = "instructions"
+
+    id: Mapped[str] = mapped_column(String(60), primary_key=True)
+    """Задаётся при создании и не меняется: по нему на инструкцию ссылаются карточки агентов."""
+    title: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
+
+
+class AgentRow(Base):
+    """Справочник агентов: системный промпт и модель сессии."""
+
+    __tablename__ = "agents"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    """Задаётся при создании и не меняется: по нему на карточку ссылаются сессии."""
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(default="")
+    system_prompt: Mapped[str]
+    instructions: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    """Идентификаторы закреплённых инструкций. Хранятся перечнем, а не связующей таблицей:
+    порядок в нём значим, а размер мал."""
+    model: Mapped[str] = mapped_column(String(300))
+    """Ссылка на модель. Разрешается в запись справочника при создании сессии."""
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
+
+
 class SessionRow(Base):
     __tablename__ = "sessions"
 
@@ -122,6 +154,10 @@ class SessionRow(Base):
     """Модель, назначенная сессии. Хранится отдельно от связи: при удалении записи
     справочника связь обнуляется, а отметка остаётся, и по ней ход отличает сессию, чья модель
     удалена, от сессии без модели."""
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"))
+    system_prompt: Mapped[str | None]
+    """Системный промпт карточки агента, скопированный при создании сессии: правка карточки
+    не меняет поведение уже идущих диалогов. Пусто — промпт сервиса по умолчанию."""
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
 

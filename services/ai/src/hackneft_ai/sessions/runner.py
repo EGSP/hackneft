@@ -44,6 +44,7 @@ from ..core.errors import (
 )
 from ..core.requirements import TurnDeps
 from ..core.snapshot import request_snapshot, sourced_tools
+from ..core.system_prompt import system_prompt
 from ..core.terminal import CompletionMode
 from ..core.turn import TurnOptions, TurnResult, run_turn
 from ..db.database import Database
@@ -314,7 +315,7 @@ class AgentRunner:
         model = await self._models.for_turn(row.model_id, row.model_provider, row.model_identifier)
         events = await self._journal.read(session_id)
         snapshot = await self._last_snapshot(events) or await self._current_snapshot(
-            session_id, "task" if row.kind == "agent" else "chat"
+            session_id, "task" if row.kind == "agent" else "chat", row.system_prompt
         )
         return measure_context(
             ContextInput(model=model.identifier, snapshot=snapshot, events=events)
@@ -329,7 +330,7 @@ class AgentRunner:
         return None
 
     async def _current_snapshot(
-        self, session_id: str, completion: CompletionMode
+        self, session_id: str, completion: CompletionMode, custom_prompt: str | None
     ) -> RequestSnapshotContent:
         """Постоянная часть, которую получил бы запрос, начнись ход сейчас. Соединения с
         серверами MCP не открываются: набор строится из сохранённых составов."""
@@ -337,6 +338,7 @@ class AgentRunner:
         try:
             return request_snapshot(
                 completion=completion,
+                prompt=_prompt(completion, custom_prompt),
                 sections=registry.instructions,
                 tools=sourced_tools(registry),
             )
@@ -406,6 +408,7 @@ class AgentRunner:
                 # обещания автора внешнего сервера не должны их вытеснять.
                 sections=registry.instructions,
                 completion=discipline.completion,
+                system_prompt=_prompt(discipline.completion, row.system_prompt),
             )
 
             turn = _Turn(
@@ -570,6 +573,11 @@ def _classify(
     if isinstance(error, TurnError):
         return "model_error", describe_turn_error(error)
     return "internal", _describe(error)
+
+
+def _prompt(completion: CompletionMode, custom: str | None) -> str | None:
+    """Промпт сессии, созданной по карточке агента. Пусто — промпт сервиса по умолчанию."""
+    return None if custom is None else system_prompt(completion, custom)
 
 
 def _describe(error: BaseException) -> str:
