@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -188,9 +189,13 @@ class SensorDataBulkResponse(BaseModel):
 
 # POST-эндпоинт пакетной записи показаний.
 # Повторная доставка обрабатывается так же, как в одиночном эндпоинте: нарушение
-# UNIQUE(timestamp, sensor_code) — штатная ситуация потока, а не ошибка. Каждая запись
-# вставляется во вложенной транзакции (SAVEPOINT), поэтому повтор одной записи не
-# отменяет остальные записи пакета.
+# UNIQUE(timestamp, sensor_code) — штатная ситуация потока, а не ошибка.
+#
+# Пакет вставляется одной командой INSERT ... ON CONFLICT DO NOTHING: повторы пропускает
+# сама СУБД, а RETURNING возвращает только вставленные строки. Прежняя вставка по одной
+# записи во вложенной транзакции (SAVEPOINT) держала блокировку записи SQLite настолько
+# долго, что при подаче крупными пакетами параллельные запросы не дожидались её снятия
+# и завершались ошибкой «database is locked».
 
 
 @app.post("/api/sensor-data/bulk", response_model=SensorDataBulkResponse, status_code=201)
@@ -199,44 +204,42 @@ def create_sensor_data_bulk(
     background_tasks: BackgroundTasks,
     db: Session = db_dependency,
 ) -> SensorDataBulkResponse:
-    saved: list[SensorData] = []
-    duplicates = 0
+    if not payload.items:
+        return SensorDataBulkResponse(accepted=0, duplicates=0)
 
-    for item in payload.items:
-        sensor_data = SensorData(
-            timestamp=item.timestamp,
-            sensor_code=item.sensor_code,
-            value=item.value,
-            source=item.source,
+    statement = (
+        sqlite_insert(SensorData)
+        .on_conflict_do_nothing(index_elements=["timestamp", "sensor_code"])
+        .returning(
+            SensorData.id,
+            SensorData.timestamp,
+            SensorData.sensor_code,
+            SensorData.value,
+            SensorData.source,
         )
-        try:
-            with db.begin_nested():
-                db.add(sensor_data)
-                db.flush()
-        except IntegrityError:
-            duplicates += 1
-            continue
-        saved.append(sensor_data)
-
+    )
+    saved = db.execute(statement, [item.model_dump() for item in payload.items]).all()
     db.commit()
 
     # События публикуются по одному на запись: подписчики диспетчера рассчитаны на
     # отдельное показание и о пакете ничего не знают. Публикация уходит в фон по той же
     # причине, что и в одиночном эндпоинте, — ответ не должен ждать подписчиков.
-    for sensor_data in saved:
+    for row in saved:
         background_tasks.add_task(
             dispatcher.publish,
             SensorDataCreated(
-                event_id=f"sensor-data:{sensor_data.id}",
-                data_id=sensor_data.id,
-                timestamp=sensor_data.timestamp,
-                sensor_code=sensor_data.sensor_code,
-                value=sensor_data.value,
-                source=sensor_data.source,
+                event_id=f"sensor-data:{row.id}",
+                data_id=row.id,
+                timestamp=row.timestamp,
+                sensor_code=row.sensor_code,
+                value=row.value,
+                source=row.source,
             ),
         )
 
-    return SensorDataBulkResponse(accepted=len(saved), duplicates=duplicates)
+    return SensorDataBulkResponse(
+        accepted=len(saved), duplicates=len(payload.items) - len(saved)
+    )
 
 # GET-эндпоинт получения последней (самой свежей) записи показания датчика.
 # Читает sensor_data напрямую (не через sensor_query) — здесь не нужно имя датчика,

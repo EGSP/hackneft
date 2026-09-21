@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from hackneft_platform.config import database_path, load_env_file
@@ -27,6 +27,22 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if database_url.startswith(
         "sqlite") else {},
 )
+
+
+# Параметры каждого нового соединения SQLite.
+# journal_mode=WAL: чтение не блокирует запись и запись не блокирует чтение, поэтому
+# запросы веб-интерфейса не мешают потоку показаний от агрегатора. Режим сохраняется
+# в файле базы, повторная установка безопасна.
+# busy_timeout: сколько миллисекунд ждать снятия блокировки другим писателем, прежде чем
+# вернуть «database is locked». Стандартных 5 секунд не хватало при подаче крупными пакетами.
+@event.listens_for(engine, "connect")
+def _configure_sqlite(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.close()
+
 
 # Фабрика сессий: autoflush=False — не сбрасывать автоматически изменения,
 # autocommit=False — не фиксировать транзакции автоматически (управляем вручную)
