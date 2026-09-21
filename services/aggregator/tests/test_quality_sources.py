@@ -1,13 +1,12 @@
 """Проверки длинного CSV качества и разбора шапки ЛИМС/ПАК."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from openpyxl import Workbook
 
 from hackneft_aggregator.catalog import SOURCES
 from hackneft_aggregator.quality_xlsx import (
-    LIMS_RESULT_DELAY,
     convert_lims_xlsx,
     convert_pak_xlsx,
     write_long_csv,
@@ -92,16 +91,22 @@ def test_lims_prefix_and_result_delay(tmp_path: Path) -> None:
     csv_path = tmp_path / "lims_tags.csv"
     write_long_csv(csv_path, readings)
 
-    # Время в CSV — доступность: отбор + 4 часа.
+    # Время в CSV — момент отбора, как в выгрузке.
     assert {item.timestamp for item in readings} == {
-        datetime(2023, 1, 2, 10, 0) + LIMS_RESULT_DELAY,
-        datetime(2023, 1, 3, 10, 0) + LIMS_RESULT_DELAY,
-        datetime(2023, 1, 3, 9, 0) + LIMS_RESULT_DELAY,
+        datetime(2023, 1, 2, 10, 0),
+        datetime(2023, 1, 3, 10, 0),
+        datetime(2023, 1, 3, 9, 0),
     }
 
     spec = next(item for item in SOURCES if item.key == "lims")
-    source = LongCsvSource(spec, csv_path)
+    source = LongCsvSource(spec, csv_path, release_delay=timedelta(hours=4))
     source.build_index()
+
+    # Проба 10:00 попадает в окно готовности 14:00, но уходит с отметкой отбора.
+    early = list(source.read(datetime(2023, 1, 2, 10, 0), datetime(2023, 1, 2, 14, 0)))
+    assert early == []
+    released = list(source.read(datetime(2023, 1, 2, 14, 0), datetime(2023, 1, 2, 14, 10)))
+    assert {reading.timestamp for reading in released} == {datetime(2023, 1, 2, 10, 0)}
     codes = {
         reading.sensor_code
         for reading in source.read(datetime(2023, 1, 1), datetime(2026, 1, 1))

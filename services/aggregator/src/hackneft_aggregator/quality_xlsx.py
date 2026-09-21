@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +23,6 @@ TagNamer = Callable[[Sequence[HeaderPair]], Sequence[str | None]]
 SERVICE_HEADINGS = frozenset(
     {"время", "дата", "значение", "результат", "time", "date", "value", "result"}
 )
-
-LIMS_RESULT_DELAY = timedelta(hours=4)
-"""Задержка появления лабораторного результата после отбора пробы (по спецификации данных)."""
 
 _INSTALLATIONS = (
     ("гидроочистк", "ht"),
@@ -63,22 +60,21 @@ def convert_pak_xlsx(path: Path) -> list[QualityReading]:
         header_rows=2,
         tag_row=0,
         name_tags=_pak_names,
-        delay=timedelta(0),
     )
 
 
 def convert_lims_xlsx(path: Path) -> list[QualityReading]:
     """Читает выгрузку ЛИМС.
 
-    Имена тегов вида `ht.2.Mg.Sulfur` (установка, точка, показатель). В CSV время — момент
-    доступности результата (отбор + 4 часа), а не момент отбора пробы.
+    Имена тегов вида `ht.2.Mg.Sulfur` (установка, точка, показатель). Время в CSV — момент
+    отбора пробы, как в выгрузке. Задержку готовности результата учитывает агрегатор при
+    отправке (настройка `AGGREGATOR_LIMS_DELAY_MINUTES`), а не конвертер.
     """
     return _collect(
         path,
         header_rows=4,
         tag_row=1,
         name_tags=_lims_names,
-        delay=LIMS_RESULT_DELAY,
     )
 
 
@@ -99,7 +95,6 @@ def _collect(
     header_rows: int,
     tag_row: int,
     name_tags: TagNamer,
-    delay: timedelta,
 ) -> list[QualityReading]:
     workbook = load_workbook(filename=path, read_only=True, data_only=True)
     try:
@@ -115,7 +110,7 @@ def _collect(
         collected: list[QualityReading] = []
         for row in rows:
             for pair in pairs:
-                reading = _reading(pair, row, delay)
+                reading = _reading(pair, row)
                 if reading is not None:
                     collected.append(reading)
         return collected
@@ -212,7 +207,7 @@ def _first_meaningful(cells: Sequence[str]) -> str:
     return ""
 
 
-def _reading(pair: _Pair, row: Sequence[Any], delay: timedelta) -> QualityReading | None:
+def _reading(pair: _Pair, row: Sequence[Any]) -> QualityReading | None:
     raw_time = _cell(row, pair.time_index)
     raw_value = _cell(row, pair.value_index)
     if raw_time is None and raw_value is None:
@@ -223,7 +218,7 @@ def _reading(pair: _Pair, row: Sequence[Any], delay: timedelta) -> QualityReadin
     value = _parse_number(raw_value)
     if value is None:
         return None
-    return QualityReading(timestamp=timestamp + delay, tag=pair.tag, value=value)
+    return QualityReading(timestamp=timestamp, tag=pair.tag, value=value)
 
 
 def _cell(row: Sequence[Any], index: int) -> Any:

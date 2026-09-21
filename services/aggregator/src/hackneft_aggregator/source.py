@@ -7,13 +7,18 @@
 
 Выгрузки ЛИМС и ПАК после конвертации лежат в длинном формате (`date,tag,value`) и на два
 порядка меньше телеметрии, поэтому читаются в память целиком и отдаются тем же интерфейсом окна.
+
+Отметка времени ЛИМС — момент отбора пробы, а результат анализа появляется позже. Поэтому для
+источника с задержкой окно отправки считается по моменту готовности результата (отметка плюс
+задержка), а в запись уходит исходная отметка отбора: показание не отправляется раньше, чем
+оно стало бы известно на установке, и на графике стоит в момент отбора.
 """
 
 import csv
 from bisect import bisect_left
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import isfinite
 from pathlib import Path
 
@@ -204,11 +209,19 @@ class LongCsvSource:
 
     Файл целиком помещается в память (сотни тысяч строк против миллионов у телеметрии). Окно
     по времени находится двоичным поиском по упорядоченному списку отметок.
+
+    `release_delay` — задержка готовности показания относительно его отметки. Показание
+    попадает в окно `[start, end)` по моменту `отметка + release_delay`, но отправляется с
+    исходной отметкой. Первая и последняя отметки источника тоже сдвинуты на задержку:
+    по последней из них исполнитель определяет, исчерпан ли источник.
     """
 
-    def __init__(self, spec: SourceSpec, path: Path) -> None:
+    def __init__(
+        self, spec: SourceSpec, path: Path, release_delay: timedelta = timedelta(0)
+    ) -> None:
         self.spec = spec
         self.path = path
+        self.release_delay = release_delay
         self.ready = False
         self.error: str | None = None
         self._times: list[datetime] = []
@@ -277,11 +290,11 @@ class LongCsvSource:
 
     @property
     def first_timestamp(self) -> datetime | None:
-        return self._times[0] if self._times else None
+        return self._times[0] + self.release_delay if self._times else None
 
     @property
     def last_timestamp(self) -> datetime | None:
-        return self._times[-1] if self._times else None
+        return self._times[-1] + self.release_delay if self._times else None
 
     def status(self) -> SourceStatus:
         return SourceStatus(
@@ -299,6 +312,8 @@ class LongCsvSource:
     def read(self, start: datetime, end: datetime) -> Iterator[Reading]:
         if not self.ready:
             return
+        # Окно по моменту готовности переводится в окно по отметке отбора.
+        start, end = start - self.release_delay, end - self.release_delay
         position = bisect_left(self._times, start)
         for number in range(position, len(self._times)):
             stamp = self._times[number]
@@ -327,12 +342,16 @@ class SourceSet:
     sources: list[Source] = field(default_factory=list)
 
     @classmethod
-    def from_directory(cls, directory: Path) -> "SourceSet":
+    def from_directory(
+        cls, directory: Path, release_delays: dict[str, timedelta] | None = None
+    ) -> "SourceSet":
+        """`release_delays` — задержка готовности показаний по ключу источника (см. LongCsvSource)."""
+        delays = release_delays or {}
         items: list[Source] = []
         for spec in SOURCES:
             path = directory / spec.file_name
             if spec.layout == "long":
-                items.append(LongCsvSource(spec, path))
+                items.append(LongCsvSource(spec, path, delays.get(spec.key, timedelta(0))))
             else:
                 items.append(CsvSource(spec, path))
         return cls(items)

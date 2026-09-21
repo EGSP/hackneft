@@ -50,7 +50,10 @@ class TickReport:
 class SimulationRunner:
     def __init__(self, config: AggregatorConfig) -> None:
         self._config = config
-        self._sources = SourceSet.from_directory(config.source_dir)
+        self._sources = SourceSet.from_directory(
+            config.source_dir,
+            {"lims": timedelta(minutes=config.lims_delay_minutes)},
+        )
         self._store = StateStore(config.state_path)
         self._platform = PlatformClient(config.platform_url, config.request_timeout_s)
 
