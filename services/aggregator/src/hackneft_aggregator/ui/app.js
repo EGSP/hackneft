@@ -134,9 +134,9 @@ function renderLive(state) {
           ["Состояние", mode(state)],
           ["Источники", indexing(state)],
           ["Следующий такт", moment(state.nextTickAt)],
-          ["Интервал опроса", `${state.intervalMinutes} мин`],
-          ["Шаг курсора", `${state.stepMinutes} мин`],
-          ["Ускорение", `×${state.speedup}`],
+          ["Интервал опроса", `${minutes(state.intervalMinutes)} мин`],
+          ["Шаг курсора", `${minutes(state.stepMinutes)} мин`],
+          ["Ускорение", `×${minutes(state.speedup)}`],
           ["Начальная дата", moment(state.startDate)],
         ]),
       ),
@@ -173,9 +173,29 @@ function renderLive(state) {
         : "Платформа: проверка…";
 }
 
+// Минуты с дробной частью. Поле текстовое, а не числовое: числовое поле в части
+// браузеров не принимает запятую и отдаёт вместо «0,1» пустую строку.
+const MIN_MINUTES = 0.01;
+
+function minutes(value) {
+  return String(value).replace(".", ",");
+}
+
+function parseMinutes(label, raw) {
+  const text = raw.trim().replace(",", ".");
+  const value = Number(text);
+  if (text === "" || !Number.isFinite(value)) {
+    throw new Error(`${label}: ожидается число, например 0,1`);
+  }
+  if (value < MIN_MINUTES) {
+    throw new Error(`${label}: значение должно быть не меньше ${minutes(MIN_MINUTES)}`);
+  }
+  return value;
+}
+
 function fillForm(state) {
-  document.getElementById("interval").value = state.intervalMinutes;
-  document.getElementById("step").value = state.stepMinutes;
+  document.getElementById("interval").value = minutes(state.intervalMinutes);
+  document.getElementById("step").value = minutes(state.stepMinutes);
   document.getElementById("cursor").value = local(state.cursor);
 }
 
@@ -231,9 +251,11 @@ document.getElementById("reset").addEventListener("click", () => {
 
 document.getElementById("settings").addEventListener("submit", (event) => {
   event.preventDefault();
-  const interval = Number(document.getElementById("interval").value);
-  const step = Number(document.getElementById("step").value);
-  act(() => call("PATCH", "../api/settings", { intervalMinutes: interval, stepMinutes: step }));
+  act(() => {
+    const interval = parseMinutes("Интервал опроса", document.getElementById("interval").value);
+    const step = parseMinutes("Шаг курсора", document.getElementById("step").value);
+    return call("PATCH", "../api/settings", { intervalMinutes: interval, stepMinutes: step });
+  });
 });
 
 document.getElementById("cursor-form").addEventListener("submit", (event) => {
