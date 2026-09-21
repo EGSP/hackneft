@@ -1,35 +1,66 @@
-import { Alert, Badge, Card, Col, DatePicker, Row, Space, Statistic, Typography } from 'antd'
-import dayjs, { type Dayjs } from 'dayjs'
+import { AimOutlined, ExpandOutlined } from '@ant-design/icons'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Col,
+  Row,
+  Segmented,
+  Space,
+  Statistic,
+  Tooltip,
+  Typography,
+} from 'antd'
+import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
+  fetchLatestTimestamp,
   fetchSensorView,
   fetchSulfurSettings,
   type SensorEvent,
   type SulfurSettings,
 } from '../api'
 import { SulfurChart, type SulfurPoint } from '../components/SulfurChart'
+import {
+  DEFAULT_MODE,
+  MODES,
+  bands,
+  modeRange,
+  type Range,
+  type WindowMode,
+} from '../components/timeWindow'
 import { useSensorStream } from '../hooks/useSensorStream'
 
-const { RangePicker } = DatePicker
+// Доля ширины видимой части, в пределах которой её правый край считается совпадающим с
+// концом окна. Перетаскивание не попадает в край точно, а следование не должно
+// отключаться от сдвига на несколько пикселей.
+const FOLLOW_TOLERANCE = 0.01
 
-// Период, показываемый при открытии страницы: двое суток, заканчивающиеся текущим
-// моментом. Дальнейший выбор делается календарём.
-const DEFAULT_RANGE_DAYS = 2
-
-// Насколько конец выбранного периода может отстоять от текущего момента, чтобы период
-// считался открытым в настоящее. Для такого периода показания из потока наносятся на
-// график сразу; для периода, целиком лежащего в прошлом, они отбрасываются, иначе ряд
-// перестал бы соответствовать тому, что указано в календаре.
-const LIVE_TOLERANCE_MINUTES = 5
-
-function defaultRange(): [Dayjs, Dayjs] {
-  const end = dayjs()
-  return [end.subtract(DEFAULT_RANGE_DAYS, 'day'), end]
+// Состояние окна графика.
+//
+// extent — окно режима: границы оси и полосы прокрутки. view — видимая его часть,
+// которую пользователь меняет прокруткой. anchor — время последней известной записи.
+// При следовании окно и видимая часть сдвигаются вслед за anchor; без следования окно
+// неподвижно, а anchor продолжает обновляться, чтобы кнопка «Следовать» знала, куда
+// переходить.
+interface WindowState {
+  anchor: number
+  extent: Range
+  view: Range
+  following: boolean
 }
 
-function isLiveRange(end: Dayjs): boolean {
-  return end.isAfter(dayjs().subtract(LIVE_TOLERANCE_MINUTES, 'minute'))
+function initialWindow(mode: WindowMode, anchor: number): WindowState {
+  const extent = modeRange(mode, anchor)
+  return { anchor, extent, view: extent, following: true }
+}
+
+// Видимая часть той же ширины, прижатая к концу окна.
+function snapView(view: Range, extent: Range): Range {
+  const width = view[1] - view[0]
+  return [Math.max(extent[0], extent[1] - width), extent[1]]
 }
 
 // Ряд отбирается по имени, под которым он запрошен (поле requested_name ответа), а не
@@ -55,77 +86,176 @@ function insertPoint(points: SulfurPoint[], point: SulfurPoint): SulfurPoint[] {
   return [...points.slice(0, index), point, ...points.slice(index)]
 }
 
+// Точки, вышедшие за начало окна, отбрасываются: при следовании окно движется
+// непрерывно, и без отсечения ряд рос бы без предела.
+function trimBefore(points: SulfurPoint[], start: number): SulfurPoint[] {
+  if (points.length === 0 || points[0][0] >= start) {
+    return points
+  }
+  const index = points.findIndex(([moment]) => moment >= start)
+  return index === -1 ? [] : points.slice(index)
+}
+
+function formatMoment(moment: number): string {
+  return dayjs(moment).format('DD.MM.YYYY HH:mm')
+}
+
 export function Dashboard() {
   const [settings, setSettings] = useState<SulfurSettings | null>(null)
-  const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange)
+  const [mode, setMode] = useState<WindowMode>(DEFAULT_MODE)
+  const [win, setWin] = useState<WindowState | null>(null)
+  // Период, за который загружены ряды. Меняется только явными действиями — выбором
+  // режима, кнопками и первой загрузкой; сдвиг окна при следовании ряды не
+  // перезагружает, а дополняет событиями потока.
+  const [loaded, setLoaded] = useState<Range | null>(null)
   const [pak, setPak] = useState<SulfurPoint[]>([])
   const [lims, setLims] = useState<SulfurPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Границы периода нужны обработчику событий, но не должны пересоздавать подписку,
-  // поэтому хранятся ещё и в ref.
-  const rangeRef = useRef(range)
-  rangeRef.current = range
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  // Текущее окно для обработчиков кнопок: им нужно прочитать состояние и по нему задать
+  // и окно, и период загрузки, а функция обновления состояния побочных действий
+  // содержать не должна.
+  const winRef = useRef(win)
+  winRef.current = win
 
   useEffect(() => {
     fetchSulfurSettings().then(setSettings).catch((reason: Error) => setError(reason.message))
   }, [])
 
-  const load = useCallback(async () => {
-    if (!settings) {
-      return
-    }
-    setLoading(true)
-    try {
-      const items = await fetchSensorView(
-        [settings.pak_name, settings.lims_name],
-        range[0].toDate(),
-        range[1].toDate(),
-      )
-      setPak(toPoints(items, settings.pak_name))
-      setLims(toPoints(items, settings.lims_name))
-      setError(null)
-    } catch (reason) {
-      setError((reason as Error).message)
-    } finally {
-      setLoading(false)
-    }
-  }, [settings, range])
+  // Окно отсчитывается от последней записи. Пока записей нет, опорой служит текущий
+  // момент: первая же запись из потока сдвинет окно к себе.
+  useEffect(() => {
+    fetchLatestTimestamp()
+      .then((latest) => {
+        const anchor = latest?.getTime() ?? Date.now()
+        const state = initialWindow(modeRef.current, anchor)
+        setWin((current) => current ?? state)
+        setLoaded((current) => current ?? state.extent)
+      })
+      .catch((reason: Error) => setError(reason.message))
+  }, [])
 
   useEffect(() => {
-    void load()
-  }, [load])
+    if (!settings || !loaded) {
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    fetchSensorView([settings.pak_name, settings.lims_name], new Date(loaded[0]), new Date(loaded[1]))
+      .then((items) => {
+        if (cancelled) {
+          return
+        }
+        setPak(toPoints(items, settings.pak_name))
+        setLims(toPoints(items, settings.lims_name))
+        setError(null)
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) {
+          setError(reason.message)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [settings, loaded])
+
+  const selectMode = useCallback((next: WindowMode) => {
+    setMode(next)
+    const current = winRef.current
+    if (!current) {
+      return
+    }
+    const state = initialWindow(next, current.anchor)
+    setWin(state)
+    setLoaded(state.extent)
+  }, [])
+
+  // «Следовать»: окно переходит к последней записи, видимая часть сохраняет ширину и
+  // прижимается к концу, и дальше окно движется вслед за новыми записями. Ряды
+  // перезагружаются: без следования события за пределами окна не накапливались.
+  const follow = useCallback(() => {
+    const current = winRef.current
+    if (!current) {
+      return
+    }
+    const extent = modeRange(modeRef.current, current.anchor)
+    setWin({ ...current, extent, view: snapView(current.view, extent), following: true })
+    setLoaded(extent)
+  }, [])
+
+  // «Восстановить»: видимая часть снова охватывает окно режима целиком.
+  const restore = useCallback(() => {
+    setWin((current) => (current ? { ...current, view: current.extent } : current))
+  }, [])
+
+  const changeView = useCallback((view: Range) => {
+    setWin((current) => {
+      if (!current) {
+        return current
+      }
+      const width = view[1] - view[0]
+      const atEnd = view[1] >= current.extent[1] - width * FOLLOW_TOLERANCE
+      return { ...current, view, following: current.following && atEnd }
+    })
+  }, [])
 
   const handleEvent = useCallback(
     (event: SensorEvent) => {
       if (!settings) {
         return
       }
+      const isPak = event.name === settings.pak_name
+      const isLims = event.name === settings.lims_name
       const moment = new Date(event.timestamp).getTime()
-      const [start, end] = rangeRef.current
-      if (moment < start.valueOf()) {
-        return
-      }
-      // Верхняя граница проверяется только у периода, целиком лежащего в прошлом.
-      // У периода, доведённого до настоящего момента, показание, пришедшее позже
-      // открытия страницы, неизбежно оказывается за его концом — и именно его
-      // страница должна показать.
-      if (moment > end.valueOf() && !isLiveRange(end)) {
-        return
-      }
 
+      // Опора окна — последняя запись по любому датчику, как и при открытии страницы.
+      setWin((current) => {
+        if (!current || moment <= current.anchor) {
+          return current
+        }
+        if (!current.following) {
+          return { ...current, anchor: moment }
+        }
+        const extent = modeRange(modeRef.current, moment)
+        const shift = extent[1] - current.extent[1]
+        const view: Range = [Math.max(extent[0], current.view[0] + shift), current.view[1] + shift]
+        return { anchor: moment, extent, view, following: true }
+      })
+
+      if (!isPak && !isLims) {
+        return
+      }
       // Событие потока несёт имя ряда, определённое сервером по справочнику, поэтому
       // здесь сравниваются имена — так же, как при выборке за период.
       const point: SulfurPoint = [moment, event.value]
-      if (event.name === settings.pak_name) {
-        setPak((points) => insertPoint(points, point))
-      } else if (event.name === settings.lims_name) {
-        setLims((points) => insertPoint(points, point))
+      const update = (points: SulfurPoint[]) => insertPoint(points, point)
+      if (isPak) {
+        setPak(update)
+      } else {
+        setLims(update)
       }
     },
     [settings],
   )
+
+  // Точки, вышедшие за начало окна, отсекаются при каждом его сдвиге.
+  const windowStart = win?.extent[0]
+  useEffect(() => {
+    if (windowStart === undefined) {
+      return
+    }
+    setPak((points) => trimBefore(points, windowStart))
+    setLims((points) => trimBefore(points, windowStart))
+  }, [windowStart])
 
   const streamStatus = useSensorStream(handleEvent)
 
@@ -141,6 +271,13 @@ export function Dashboard() {
     [pak, limit],
   )
 
+  const extent = win?.extent ?? null
+  const chartBands = useMemo(
+    () => (extent ? bands(MODES[mode].band, extent) : []),
+    [extent, mode],
+  )
+  const isRestored = win ? win.view[0] === win.extent[0] && win.view[1] === win.extent[1] : true
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Row justify="space-between" align="middle" gutter={[16, 16]}>
@@ -153,35 +290,16 @@ export function Dashboard() {
           </Typography.Text>
         </Col>
         <Col>
-          <Space size="middle">
-            <Badge
-              status={streamStatus === 'open' ? 'processing' : 'default'}
-              text={
-                streamStatus === 'open'
-                  ? 'Поток событий подключён'
-                  : streamStatus === 'connecting'
-                    ? 'Подключение к потоку'
-                    : 'Поток событий недоступен'
-              }
-            />
-            <RangePicker
-              showTime={{ format: 'HH:mm' }}
-              format="DD.MM.YYYY HH:mm"
-              allowClear={false}
-              value={range}
-              onChange={(value) => {
-                if (value && value[0] && value[1]) {
-                  setRange([value[0], value[1]])
-                }
-              }}
-              presets={[
-                { label: 'Сутки', value: [dayjs().subtract(1, 'day'), dayjs()] },
-                { label: 'Двое суток', value: [dayjs().subtract(2, 'day'), dayjs()] },
-                { label: 'Неделя', value: [dayjs().subtract(7, 'day'), dayjs()] },
-                { label: 'Месяц', value: [dayjs().subtract(30, 'day'), dayjs()] },
-              ]}
-            />
-          </Space>
+          <Badge
+            status={streamStatus === 'open' ? 'processing' : 'default'}
+            text={
+              streamStatus === 'open'
+                ? 'Поток событий подключён'
+                : streamStatus === 'connecting'
+                  ? 'Подключение к потоку'
+                  : 'Поток событий недоступен'
+            }
+          />
         </Col>
       </Row>
 
@@ -221,15 +339,58 @@ export function Dashboard() {
         </Col>
       </Row>
 
-      <Card>
-        <SulfurChart
-          pak={pak}
-          lims={lims}
-          pakName={pakName}
-          limsName={limsName}
-          limit={limit}
-          loading={loading}
-        />
+      <Card
+        title={
+          <Space size="middle" wrap>
+            <Segmented<WindowMode>
+              value={mode}
+              onChange={selectMode}
+              options={(Object.keys(MODES) as WindowMode[]).map((key) => ({
+                value: key,
+                label: MODES[key].label,
+              }))}
+            />
+            {win && (
+              <Typography.Text type="secondary" style={{ fontWeight: 'normal' }}>
+                {formatMoment(win.extent[0])} — {formatMoment(win.extent[1])}
+              </Typography.Text>
+            )}
+          </Space>
+        }
+        extra={
+          <Space>
+            <Tooltip title="Перевести окно к последней записи и двигать его вслед за новыми">
+              <Button
+                icon={<AimOutlined />}
+                type={win?.following ? 'primary' : 'default'}
+                disabled={!win}
+                onClick={follow}
+              >
+                Следовать
+              </Button>
+            </Tooltip>
+            <Tooltip title="Показать окно выбранного режима целиком">
+              <Button icon={<ExpandOutlined />} disabled={!win || isRestored} onClick={restore}>
+                Восстановить
+              </Button>
+            </Tooltip>
+          </Space>
+        }
+      >
+        {win && (
+          <SulfurChart
+            pak={pak}
+            lims={lims}
+            pakName={pakName}
+            limsName={limsName}
+            limit={limit}
+            loading={loading}
+            extent={win.extent}
+            view={win.view}
+            bands={chartBands}
+            onViewChange={changeView}
+          />
+        )}
       </Card>
     </Space>
   )
