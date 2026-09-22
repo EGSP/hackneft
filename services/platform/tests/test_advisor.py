@@ -1,6 +1,7 @@
 """Сценарии событий и общего допуска, без вызовов настоящей языковой модели."""
 
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -277,6 +278,7 @@ def test_http_launch_once_and_result_is_saved(service: AdvisorService) -> None:
 
     asyncio.run(scenario())
     assert len(posts) == 1
+    assert json.loads(posts[0].content)["agent"] == "advisor"
     assert service.status()["last_run"]["result"] == "Совет"
     assert service.active_run() is None
 

@@ -18,6 +18,7 @@ class Instruction(ApiModel):
     """Идентификатор инструкции. Задаётся при создании и не меняется: по нему на инструкцию
     ссылаются карточки агентов."""
     title: str
+    description: str = ""
     text: str
     created_at: str
     updated_at: str
@@ -25,6 +26,7 @@ class Instruction(ApiModel):
 
 class CreateInstructionRequest(ApiModel):
     id: str = Field(min_length=1, max_length=60, pattern=INSTRUCTION_ID_PATTERN)
+    description: str = Field(default="", max_length=2000)
     title: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=20_000)
 
@@ -32,6 +34,7 @@ class CreateInstructionRequest(ApiModel):
 class UpdateInstructionRequest(ApiModel):
     """Правка инструкции. Идентификатора в ней нет: он не меняется."""
 
+    description: str | None = Field(default=None, max_length=2000)
     title: str | None = Field(default=None, min_length=1, max_length=200)
     text: str | None = Field(default=None, min_length=1, max_length=20_000)
 

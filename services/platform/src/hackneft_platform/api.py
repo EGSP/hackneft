@@ -18,8 +18,6 @@ from sqlalchemy.orm import Session
 from hackneft_platform import handlers  # noqa: F401  (регистрирует обработчиков событий)
 from hackneft_platform.advisor.runtime import configured_service, run_worker
 from hackneft_platform.advisor.service import local_time, record_input
-from hackneft_platform.mcp_server import create_mcp_app
-from hackneft_platform.mcp_server import server as mcp_server
 from hackneft_platform.catalog import (
     SULFUR_LIMIT_MG_KG,
     SULFUR_LIMS_NAME,
@@ -33,6 +31,8 @@ from hackneft_platform.handlers.sulfur_stream import (
     reset_tracked_codes,
     subscribers,
 )
+from hackneft_platform.mcp_server import create_mcp_app
+from hackneft_platform.mcp_server import server as mcp_server
 from hackneft_platform.models import SensorData, SensorName, sensor_query
 
 # Асинхронный контекстный менеджер жизненного цикла приложения:

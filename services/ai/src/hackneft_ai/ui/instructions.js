@@ -17,11 +17,13 @@ function create(ctx) {
         help: "Строчные латинские буквы, цифры и дефис. После создания не меняется.",
       }),
       textField("Название", { name: "title", required: true }),
-      textArea("Текст", { name: "text", rows: 10, required: true }),
+      textArea("Описание", { name: "description", rows: 2 }),
+      textArea("Что делать", { name: "text", rows: 10, required: true }),
     ],
     submit: (form) => api.post("/instructions", {
       id: form.elements.id.value.trim(),
       title: form.elements.title.value.trim(),
+      description: form.elements.description.value.trim(),
       text: form.elements.text.value.trim(),
     }),
     done: (item) => ctx.reload(`Инструкция «${item.title}» добавлена`),
@@ -34,10 +36,12 @@ function edit(ctx, item) {
     wide: true,
     body: [
       textField("Название", { name: "title", value: item.title, required: true }),
-      textArea("Текст", { name: "text", value: item.text, rows: 10, required: true }),
+      textArea("Описание", { name: "description", value: item.description || "", rows: 2 }),
+      textArea("Что делать", { name: "text", value: item.text, rows: 10, required: true }),
     ],
     submit: (form) => api.patch(`/instructions/${item.id}`, {
       title: form.elements.title.value.trim(),
+      description: form.elements.description.value.trim(),
       text: form.elements.text.value.trim(),
     }),
     done: () => ctx.reload(`Инструкция «${item.title}» сохранена`),
@@ -59,10 +63,13 @@ export const instructions = {
     return [
       toolbar(button("Добавить инструкцию", () => create(ctx), "positive")),
       table(
-        ["Название", "Текст", ""],
+        ["Название", "Описание и действия", ""],
         data.instructions.map((item) => [
           el("div", {}, el("strong", {}, item.title), el("div", {}, el("code", {}, item.id))),
-          el("div", { class: "instruction-text" }, item.text),
+          el("div", {},
+            el("p", {}, item.description || "Описание не задано"),
+            el("details", {}, el("summary", {}, "Что делать"),
+              el("div", { class: "instruction-text" }, item.text))),
           actions(
             button("Изменить", () => edit(ctx, item)),
             button("Удалить", () => remove(ctx, item), "negative")),

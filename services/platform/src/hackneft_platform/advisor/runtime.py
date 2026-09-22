@@ -28,7 +28,8 @@ def configured_service() -> AdvisorService:
 def task_for(run: dict[str, Any]) -> str:
     return (
         "Ты советник оператора установки гидроочистки 24-2000. Рассмотри все причины "
-        "вместе и выдай одну согласованную рекомендацию или обоснованный отказ. "
+        "вместе. Собери одну сводку по результатам дочерних агентов согласно карточке. "
+        "Если вызов агентов недоступен, явно сообщи об этом и не имитируй результаты. "
         "Структура ответа: что изменилось; возможное влияние на качество; что проверить "
         "или сделать; когда оценить эффект. Не выдавай исторические диапазоны за "
         "технологические пределы. Не придумывай допустимые уставки. Новое значение "
@@ -70,9 +71,8 @@ class AdvisorWorker:
             "title": f"24-2000 / {run['id']}",
             "task": task_for(run),
             "tools": [],
+            "agent": os.getenv("ADVISOR_AGENT_ID") or "advisor",
         }
-        if agent := os.getenv("ADVISOR_AGENT_ID"):
-            payload["agent"] = agent
         try:
             response = await self.client.post("/api/sessions", json=payload)
             if 400 <= response.status_code < 500:

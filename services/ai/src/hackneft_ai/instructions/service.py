@@ -55,7 +55,10 @@ class InstructionDirectory:
                 raise ConflictError(f"Инструкция «{request.id}» уже существует")
             tx.add(
                 InstructionRow(
-                    id=request.id, title=request.title.strip(), text=request.text.strip()
+                    id=request.id,
+                    title=request.title.strip(),
+                    text=request.text.strip(),
+                    description=request.description.strip(),
                 )
             )
         return await self.require(request.id)
@@ -65,6 +68,8 @@ class InstructionDirectory:
         values: dict[str, str] = {}
         if request.title is not None:
             values["title"] = request.title.strip()
+        if request.description is not None:
+            values["description"] = request.description.strip()
         if request.text is not None:
             values["text"] = request.text.strip()
         if values:
@@ -103,6 +108,7 @@ def _to_instruction(row: InstructionRow) -> Instruction:
         id=row.id,
         title=row.title,
         text=row.text,
+        description=row.description,
         created_at=iso(row.created_at),
         updated_at=iso(row.updated_at),
     )

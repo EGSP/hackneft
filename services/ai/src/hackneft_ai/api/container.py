@@ -8,8 +8,8 @@ from dataclasses import dataclass
 import httpx2
 
 from ..agents.seed import seed_defaults
-from ..bootstrap import start_bootstrap
 from ..agents.service import AgentDirectory
+from ..bootstrap import start_bootstrap
 from ..config import AppConfig
 from ..db.database import Database
 from ..instructions.service import InstructionDirectory
@@ -96,7 +96,7 @@ async def start_services(config: AppConfig) -> Services:
     await runner.reconcile_on_startup()
     await models.relink()
     await models.check_problems()
-    await seed_defaults(agents, instructions)
+    await seed_defaults(db)
     availability.start()
     bootstrap = start_bootstrap(config.bootstrap, providers, models, mcp)
 

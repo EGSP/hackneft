@@ -102,6 +102,7 @@ class InstructionRow(Base):
     id: Mapped[str] = mapped_column(String(60), primary_key=True)
     """Задаётся при создании и не меняется: по нему на инструкцию ссылаются карточки агентов."""
     title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(default="", server_default="")
     text: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
@@ -221,3 +222,11 @@ class McpConnectionRow(Base):
     last_check_message: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
+
+
+class CatalogMigrationRow(Base):
+    """Однократные изменения каталога и резервная копия прежних карточек."""
+
+    __tablename__ = "catalog_migrations"
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
