@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App as AntApp, ConfigProvider, theme } from 'antd'
 import ruRU from 'antd/locale/ru_RU'
 import dayjs from 'dayjs'
@@ -10,6 +11,17 @@ import { App } from './App'
 import './index.css'
 
 dayjs.locale('ru')
+
+// Кеш запросов раздела сессий (sessions/queries.ts). Журнал сессии приходит событиями через
+// поток, а перечень и записи сессий опрашиваются с заданным периодом, поэтому перечитывание
+// при возврате на вкладку браузера не нужно. Правило повтора задают сами запросы.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+})
 
 const container = document.getElementById('root')
 if (!container) {
@@ -28,9 +40,11 @@ createRoot(container).render(
       }}
     >
       <AntApp>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </QueryClientProvider>
       </AntApp>
     </ConfigProvider>
   </StrictMode>,

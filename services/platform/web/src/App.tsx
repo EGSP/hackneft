@@ -1,16 +1,20 @@
-import { DatabaseOutlined, LineChartOutlined } from '@ant-design/icons'
+import { DatabaseOutlined, LineChartOutlined, RobotOutlined } from '@ant-design/icons'
 import { Layout, Menu, Typography } from 'antd'
 import { useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { Dashboard } from './pages/Dashboard'
+import { Sessions } from './pages/Sessions'
 import { Synonyms } from './pages/Synonyms'
+import { EmptyState } from './sessions/EmptyState'
+import { SessionView } from './sessions/SessionView'
 
 const { Sider, Content, Header } = Layout
 
 const MENU_ITEMS = [
   { key: '/', icon: <LineChartOutlined />, label: 'Главная' },
   { key: '/synonyms', icon: <DatabaseOutlined />, label: 'Справочник синонимов' },
+  { key: '/sessions', icon: <RobotOutlined />, label: 'Сессии' },
 ]
 
 export function App() {
@@ -19,9 +23,13 @@ export function App() {
   // Состояние панели отслеживается здесь, а не только внутри Sider: в свёрнутом виде
   // ширины не хватает на название, и текст заголовка заменяется сокращением.
   const [collapsed, setCollapsed] = useState(false)
+  // Раздел сессий занимает ровно высоту окна и прокручивает перечень и журнал по
+  // отдельности (см. pages/Sessions.tsx), поэтому для него раскладка ограничена высотой
+  // окна, а у области содержимого нет полей. Остальные страницы растут вместе с содержимым.
+  const inSessions = location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={inSessions ? { height: '100dvh' } : { minHeight: '100vh' }}>
       <Sider
         theme="light"
         width={240}
@@ -56,7 +64,8 @@ export function App() {
         </div>
         <Menu
           mode="inline"
-          selectedKeys={[location.pathname]}
+          // Адрес сессии вложен в раздел, и пункт меню раздела остаётся выделенным.
+          selectedKeys={[inSessions ? '/sessions' : location.pathname]}
           items={MENU_ITEMS}
           onClick={({ key }) => navigate(key)}
         />
@@ -65,10 +74,20 @@ export function App() {
         <Header style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', paddingInline: 24 }}>
           <Typography.Text type="secondary">Контроль качества дизельного топлива</Typography.Text>
         </Header>
-        <Content style={{ padding: 24 }}>
+        <Content
+          style={
+            inSessions
+              ? { display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }
+              : { padding: 24 }
+          }
+        >
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/synonyms" element={<Synonyms />} />
+            <Route path="/sessions" element={<Sessions />}>
+              <Route index element={<EmptyState />} />
+              <Route path=":sessionId" element={<SessionView />} />
+            </Route>
             {/* Неизвестный адрес возвращает на главную: сервер отдаёт index.html
                 на любой путь, поэтому сюда попадает и опечатка в строке браузера. */}
             <Route path="*" element={<Navigate to="/" replace />} />

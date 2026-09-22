@@ -15,6 +15,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hackneft_platform import ai_sessions
 from hackneft_platform import handlers  # noqa: F401  (регистрирует обработчиков событий)
 from hackneft_platform.advisor.runtime import configured_service, run_worker
 from hackneft_platform.advisor.service import local_time, record_input
@@ -64,6 +65,9 @@ app = FastAPI(title="Hackneft Platform", lifespan=lifespan)
 # Инструменты агентов (mcp_server.py) — Streamable HTTP по адресу /mcp/. Монтируется до
 # остальных маршрутов: последний из них отдаёт index.html на любой путь.
 app.mount("/mcp", mcp_app)
+# Сессии ИИ-сервиса для страницы «Сессии» (ai_sessions.py) — по той же причине до остальных
+# маршрутов.
+app.include_router(ai_sessions.router)
 db_dependency = Depends(get_db)
 # Повторяющийся параметр запроса: ?name=ПАК&name=ЛИМС. Объявлен здесь, а не прямо
 # в сигнатуре эндпоинта: вызов в значении по умолчанию выполняется один раз при
