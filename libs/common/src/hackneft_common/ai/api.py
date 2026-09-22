@@ -2,7 +2,7 @@
 
 from typing import Self
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from .base import ApiModel
 from .events import SessionEvent
@@ -40,6 +40,14 @@ class CreateSessionRequest(ApiModel):
     его наравне с другими ссылками."""
     traceparent: str | None = Field(default=None, max_length=200)
     """Контекст трассы вызывающей стороны в формате W3C Trace Context."""
+    input: JsonValue = None
+    """Исходные данные агентской сессии. Добавляются к постановке задачи блоком JSON и
+    хранятся в сессии отдельно: инструмент `run_agent` может передать их дочернему агенту
+    дословно, не пересказывая через модель."""
+    result_schema: dict[str, JsonValue] | None = None
+    """JSON Schema итога агентской сессии. Если задана, после вызова `attempt_completion`
+    сервис ещё раз обращается к модели, требуя ответ строго по схеме, проверяет его и
+    сохраняет итогом сессии объект, а не текст."""
 
 
 class SendMessageRequest(ApiModel):

@@ -115,7 +115,10 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
         agent=AgentConfig(
             max_steps=reader.integer("AGENT_MAX_STEPS", 10, minimum=1),
             temperature=reader.number("AGENT_TEMPERATURE", 0.3),
-            max_tokens=reader.optional_integer("AGENT_MAX_TOKENS"),
+            # Предел вывода вместе с рассуждением. По журналам успешные ответы укладываются
+            # в 6,5 тыс. токенов, а зацикленное рассуждение доходит до предела провайдера
+            # (32 768): 8 192 обрывает цикл вчетверо раньше (см. core/budget.py).
+            max_tokens=reader.integer("AGENT_MAX_TOKENS", 8192, minimum=1),
             tool_result_max_chars=reader.integer("TOOL_RESULT_MAX_CHARS", 8000, minimum=100),
         ),
         mcp=McpConfig(

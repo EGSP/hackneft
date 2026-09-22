@@ -8,8 +8,10 @@
 ответе на запрос создания.
 """
 
+import json
 from typing import get_args
 
+from pydantic import JsonValue
 from sqlalchemy import delete, select, update
 
 from hackneft_common.ai import (
@@ -27,6 +29,7 @@ from ..errors import BadRequestError, ConflictError, NotFoundError
 from ..models.service import ModelChoice, ModelDirectory, ModelTurnError
 from .bus import SessionEventBus
 from .journal import SessionJournal
+from .result_schema import check_result_schema
 from .runner import AgentRunner
 
 _DEFAULT_CHAT_TITLE = "Новый чат"
@@ -77,6 +80,10 @@ class SessionsService:
         kind: SessionKind = request.kind or "chat"
         if kind == "agent" and request.task is None:
             raise BadRequestError("Для агентской сессии обязательна постановка задачи")
+        if kind != "agent" and (request.input is not None or request.result_schema is not None):
+            raise BadRequestError("Исходные данные и схема итога есть только у агентской сессии")
+        if request.result_schema is not None:
+            check_result_schema(request.result_schema)
         if request.parent_id is not None:
             await self.require(request.parent_id)
         agent = None if request.agent is None else await self._agents.require(request.agent)
@@ -112,6 +119,8 @@ class SessionsService:
                 model_identifier=None if model is None else model.identifier,
                 agent_id=None if agent is None else agent.id,
                 system_prompt=system_prompt,
+                input=request.input,
+                result_schema=request.result_schema,
             )
             tx.add(row)
             await tx.flush()
@@ -127,7 +136,11 @@ class SessionsService:
             self._runner.claim(session_id)
             try:
                 await self._runner.submit_task(
-                    session_id, request.task, request.tools, request.traceparent
+                    session_id,
+                    with_input(request.task, request.input),
+                    request.tools,
+                    request.traceparent,
+                    request.result_schema,
                 )
             except BaseException:
                 self._runner.release(session_id)
@@ -261,6 +274,18 @@ _KINDS: tuple[SessionKind, ...] = get_args(SessionKind)
 _STATUSES: tuple[SessionStatus, ...] = get_args(SessionStatus)
 
 
+def with_input(task: str, data: JsonValue) -> str:
+    """Постановка задачи вместе с исходными данными.
+
+    Данные идут отдельным блоком после текста задачи: модель видит, где кончается задание и
+    начинаются данные, а сессия хранит их отдельно для передачи дочерним агентам.
+    """
+    if data is None:
+        return task
+    block = json.dumps(data, ensure_ascii=False, indent=1)
+    return f"{task.rstrip()}\n\n## Исходные данные\n\n```json\n{block}\n```"
+
+
 def _to_session(row: SessionRow) -> Session:
     return Session(
         id=row.id,
@@ -276,5 +301,6 @@ def _to_session(row: SessionRow) -> Session:
         parent_id=row.parent_id,
         agent_id=row.agent_id,
         result=row.result,
+        input=row.input,
         failure_message=row.failure_message,
     )

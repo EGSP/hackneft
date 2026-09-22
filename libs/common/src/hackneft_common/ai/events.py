@@ -62,6 +62,11 @@ class UserMessageEvent(EventBase):
     text: str
 
 
+BudgetRetry = Literal["no_reasoning"]
+"""Вид повтора шага, исчерпавшего бюджет вывода: ответ с выключенным рассуждением по
+рассуждению оборванной попытки."""
+
+
 class StepStartedEvent(EventBase):
     """Начало шага.
 
@@ -82,6 +87,9 @@ class StepStartedEvent(EventBase):
     """
     snapshot_id: str | None = None
     """Снимок постоянной части запроса: системного промпта и описаний инструментов."""
+    retry: BudgetRetry | None = None
+    """Повтор шага после того, как рассуждение исчерпало бюджет вывода: ответ с выключенным
+    рассуждением по рассуждению оборванной попытки. Пусто у первой попытки."""
 
 
 class ModelReplyEvent(EventBase):

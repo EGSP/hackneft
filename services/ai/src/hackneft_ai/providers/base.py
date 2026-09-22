@@ -6,10 +6,10 @@
 зависимость `ModelClient`, которую сервис собирает из провайдера и модели хода.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from hackneft_common.ai import ProviderModel
 
@@ -59,8 +59,15 @@ class ModelProvider(Protocol):
         messages: Sequence[AgentMessage],
         tools: Sequence[ToolSpec],
         settings: ChatSettings,
+        *,
+        result_schema: Mapping[str, Any] | None = None,
+        reasoning_effort: str | None = None,
     ) -> ModelReply:
-        """Обращение к модели. Отказ объявляется исключением `ModelFailure`."""
+        """Обращение к модели. Отказ объявляется исключением `ModelFailure`.
+
+        `result_schema` — JSON Schema ответа: модель обязана вернуть объект по ней.
+        `reasoning_effort` — объём рассуждения; пусто — по умолчанию модели.
+        """
         ...
 
     async def list_models(self, *, force: bool = False) -> ProviderModelList: ...

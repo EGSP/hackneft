@@ -16,8 +16,9 @@ import contextlib
 import logging
 import time
 import traceback
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from opentelemetry.trace import Span, Status, StatusCode
 from sqlalchemy import select, update
@@ -85,6 +86,7 @@ class _Discipline:
     """Завершает ли исход хода сессию целиком."""
     tools: Sequence[str] | None = None
     traceparent: str | None = None
+    result_schema: Mapping[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -255,6 +257,7 @@ class AgentRunner:
         task: str,
         tools: Sequence[str] | None,
         traceparent: str | None,
+        result_schema: Mapping[str, Any] | None = None,
     ) -> None:
         """Принимает постановку задачи и запускает агентскую сессию.
 
@@ -277,8 +280,23 @@ class AgentRunner:
             session_id,
             task,
             model,
-            _Discipline("task", terminal=True, tools=tools, traceparent=traceparent),
+            _Discipline(
+                "task",
+                terminal=True,
+                tools=tools,
+                traceparent=traceparent,
+                result_schema=result_schema,
+            ),
         )
+
+    async def wait(self, session_id: str) -> None:
+        """Дожидается записи исхода хода, если ход идёт в этом процессе.
+
+        Ход, завершившийся до вызова, уже записал исход, и ждать нечего.
+        """
+        turn = self._turns.get(session_id)
+        if turn is not None:
+            await turn.finished.wait()
 
     async def interrupt(self, session_id: str) -> bool:
         """Прерывает ход и дожидается записи его исхода. Отмена доходит до запроса к модели,
@@ -409,6 +427,7 @@ class AgentRunner:
                 sections=registry.instructions,
                 completion=discipline.completion,
                 system_prompt=_prompt(discipline.completion, row.system_prompt),
+                result_schema=discipline.result_schema,
             )
 
             turn = _Turn(
@@ -511,7 +530,10 @@ class AgentRunner:
                     ),
                 )
                 return
-            await self._journal.settle(session_id, SessionCompletedEvent(result=result.text))
+            await self._journal.settle(
+                session_id,
+                SessionCompletedEvent(result=result.text if result.data is None else result.data),
+            )
         finally:
             span.end()
             if not turn.terminal:

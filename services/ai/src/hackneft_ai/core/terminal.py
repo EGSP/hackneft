@@ -34,10 +34,7 @@ TurnFinish = Literal["completion", "question", "plain"]
 
 
 class _CompletionArguments(BaseModel):
-    text: str = Field(
-        min_length=1,
-        description="Итоговый ответ целиком. Это единственный текст, который увидит адресат",
-    )
+    """Аргументов нет: итог модель даёт ответом на запрос, который возвращает вызов."""
 
 
 class _QuestionArguments(BaseModel):
@@ -50,8 +47,9 @@ class _QuestionArguments(BaseModel):
 _ATTEMPT_COMPLETION_SPEC = ToolSpec(
     name=ATTEMPT_COMPLETION,
     description=(
-        "Завершает работу и передаёт итоговый ответ. Вызывай, когда задача выполнена. "
-        "Не описывай предстоящие шаги словами вместо их выполнения."
+        "Объявляет, что работа закончена. Вызывай без аргументов, когда всё нужное сделано: "
+        "в ответ придёт запрос итогового ответа, и на него ты ответишь. Не описывай "
+        "предстоящие шаги словами вместо их выполнения."
     ),
     parameters=json_schema_of(_CompletionArguments),
 )
