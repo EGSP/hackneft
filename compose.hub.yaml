@@ -1,0 +1,66 @@
+# Запуск всех сервисов из готовых образов Docker Hub, без исходного кода и сборки.
+# Достаточно скачать этот файл и выполнить в его каталоге:
+#
+#   docker compose -f compose.hub.yaml up -d
+#
+# Платформа — http://localhost:8000, ИИ-сервис — http://localhost:8100,
+# агрегатор — http://localhost:8200.
+#
+# Данные телеметрии и качества встроены в образ агрегатора, отдельный каталог данных не нужен.
+#
+# Ключи Yandex в образы не входят. Если рядом с этим файлом лежит secrets/yandex.env, ИИ-сервис
+# при первом запуске сам заведёт провайдера Yandex и модель по умолчанию; другой каталог
+# задаётся переменной HACKNEFT_SECRETS_DIR. Без файла провайдера и модель настраивают
+# в веб-интерфейсе ИИ-сервиса на вкладках «Провайдеры» и «Модели».
+
+services:
+  ai:
+    image: p0lluxstar/hackneft-ai:latest
+    pull_policy: always
+    environment:
+      AI_BOOTSTRAP_DIR: /bootstrap
+      AI_BOOTSTRAP_MCP: '{"mcpServers": {"platform": {"url": "http://platform:8000/mcp/"}}}'
+    ports:
+      - "8100:8100"
+    volumes:
+      - ai-data:/data
+      - ${HACKNEFT_SECRETS_DIR:-./secrets}:/bootstrap:ro
+    restart: unless-stopped
+
+  platform:
+    image: p0lluxstar/hackneft-platform:latest
+    pull_policy: always
+    environment:
+      AI_SERVICE_URL: http://ai:8100
+      AGGREGATOR_URL: http://aggregator:8200
+    ports:
+      - "8000:8000"
+    volumes:
+      - platform-data:/data
+    depends_on:
+      ai:
+        condition: service_healthy
+    restart: unless-stopped
+
+  aggregator:
+    image: p0lluxstar/hackneft-aggregator:latest
+    pull_policy: always
+    environment:
+      PLATFORM_URL: http://platform:8000
+      AGGREGATOR_START_DATE: "2023-01-01T00:00:00"
+      AGGREGATOR_INTERVAL_MINUTES: "10"
+      AGGREGATOR_STEP_MINUTES: "10"
+      AGGREGATOR_PRELOAD_HOURS: "72"
+    ports:
+      - "8200:8200"
+    volumes:
+      - aggregator-state:/data/state
+    depends_on:
+      platform:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ai-data:
+  platform-data:
+  aggregator-state:
