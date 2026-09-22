@@ -5,8 +5,10 @@
 конфигурации в формате MCP-клиентов. Заполняется только отсутствующее: записи, заведённые или
 изменённые через API, остаются как есть.
 
-Подключения MCP заводятся в фоне с повторами. Справочник не принимает недостижимый сервер, а
-сервер MCP может подняться позже ИИ-сервиса — в compose платформа запускается после него.
+Заполнение идёт в фоновой задаче и запуск сервиса не задерживает: карточка провайдера при
+создании проверяется обращением к Yandex, и при недоступной сети это занимает до минуты.
+Подключения MCP заводятся с повторами: справочник не принимает недостижимый сервер, а сервер MCP
+может подняться позже ИИ-сервиса — в compose платформа запускается после него.
 """
 
 import asyncio
@@ -104,9 +106,22 @@ async def bootstrap_directories(
     logger.info("модель %s заведена", config.default_model)
 
 
-def start_mcp_bootstrap(config: BootstrapConfig, directory: McpDirectory) -> asyncio.Task[None]:
-    """Запускает фоновое заведение подключений MCP. Задачу отменяет остановка сервиса."""
-    return asyncio.create_task(_bootstrap_mcp(config, directory), name="bootstrap-mcp")
+def start_bootstrap(
+    config: BootstrapConfig,
+    providers: ProviderDirectory,
+    models: ModelDirectory,
+    mcp: McpDirectory,
+) -> asyncio.Task[None]:
+    """Запускает фоновое заполнение справочников. Задачу отменяет остановка сервиса."""
+
+    async def run() -> None:
+        try:
+            await bootstrap_directories(config, providers, models)
+        except Exception:
+            logger.exception("провайдер и модель по умолчанию не заведены")
+        await _bootstrap_mcp(config, mcp)
+
+    return asyncio.create_task(run(), name="bootstrap")
 
 
 async def _bootstrap_mcp(config: BootstrapConfig, directory: McpDirectory) -> None:
