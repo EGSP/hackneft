@@ -22,6 +22,7 @@ import {
   type SensorEvent,
   type SulfurSettings,
 } from '../api'
+import { ProcessChart } from '../components/ProcessChart'
 import { SulfurChart, type SulfurPoint } from '../components/SulfurChart'
 import {
   DEFAULT_MODE,
@@ -37,6 +38,8 @@ import { useSensorStream } from '../hooks/useSensorStream'
 // концом окна. Перетаскивание не попадает в край точно, а следование не должно
 // отключаться от сдвига на несколько пикселей.
 const FOLLOW_TOLERANCE = 0.01
+const TEMPERATURE = 'ht_t6'
+const FEED = 'ht_f9'
 
 // Состояние окна графика.
 //
@@ -110,6 +113,8 @@ export function Dashboard() {
   const [loaded, setLoaded] = useState<Range | null>(null)
   const [pak, setPak] = useState<SulfurPoint[]>([])
   const [lims, setLims] = useState<SulfurPoint[]>([])
+  const [temperature, setTemperature] = useState<SulfurPoint[]>([])
+  const [feed, setFeed] = useState<SulfurPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -144,13 +149,18 @@ export function Dashboard() {
     }
     let cancelled = false
     setLoading(true)
-    fetchSensorView([settings.pak_name, settings.lims_name], new Date(loaded[0]), new Date(loaded[1]))
+    fetchSensorView(
+      [settings.pak_name, settings.lims_name, TEMPERATURE, FEED],
+      new Date(loaded[0]), new Date(loaded[1]),
+    )
       .then((items) => {
         if (cancelled) {
           return
         }
         setPak(toPoints(items, settings.pak_name))
         setLims(toPoints(items, settings.lims_name))
+        setTemperature(toPoints(items, TEMPERATURE))
+        setFeed(toPoints(items, FEED))
         setError(null)
       })
       .catch((reason: Error) => {
@@ -215,6 +225,8 @@ export function Dashboard() {
       }
       const isPak = event.name === settings.pak_name
       const isLims = event.name === settings.lims_name
+      const isTemperature = event.sensor_code === TEMPERATURE
+      const isFeed = event.sensor_code === FEED
       const moment = new Date(event.timestamp).getTime()
 
       // Опора окна — последняя запись по любому датчику, как и при открытии страницы.
@@ -231,7 +243,7 @@ export function Dashboard() {
         return { anchor: moment, extent, view, following: true }
       })
 
-      if (!isPak && !isLims) {
+      if (!isPak && !isLims && !isTemperature && !isFeed) {
         return
       }
       // Событие потока несёт имя ряда, определённое сервером по справочнику, поэтому
@@ -240,8 +252,12 @@ export function Dashboard() {
       const update = (points: SulfurPoint[]) => insertPoint(points, point)
       if (isPak) {
         setPak(update)
-      } else {
+      } else if (isLims) {
         setLims(update)
+      } else if (isTemperature) {
+        setTemperature(update)
+      } else if (isFeed) {
+        setFeed(update)
       }
     },
     [settings],
@@ -255,6 +271,8 @@ export function Dashboard() {
     }
     setPak((points) => trimBefore(points, windowStart))
     setLims((points) => trimBefore(points, windowStart))
+    setTemperature((points) => trimBefore(points, windowStart))
+    setFeed((points) => trimBefore(points, windowStart))
   }, [windowStart])
 
   const streamStatus = useSensorStream(handleEvent)
@@ -393,6 +411,24 @@ export function Dashboard() {
           />
         )}
       </Card>
+      {win && (
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={12}>
+            <ProcessChart
+              title="Температура на входе в реактор"
+              unit="°C" color="#722ed1" points={temperature}
+              view={win.view} loading={loading}
+            />
+          </Col>
+          <Col xs={24} md={12}>
+            <ProcessChart
+              title="Подача сырья"
+              unit="т/ч" color="#08979c" points={feed}
+              view={win.view} loading={loading}
+            />
+          </Col>
+        </Row>
+      )}
     </Space>
   )
 }
