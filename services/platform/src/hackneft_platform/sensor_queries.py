@@ -200,20 +200,30 @@ def buckets(
 
 
 def search_catalog(db: Session, query: str, limit: int) -> list[dict[str, object]]:
-    """Поиск датчиков: каждое слово запроса должно встречаться в коде или в одном из имён."""
+    """Поиск датчиков по словам запроса в коде и именах.
+
+    Датчики упорядочены по числу совпавших слов, а не отбираются по совпадению всех: агент
+    пишет запрос своими словами («сера дизель»), и одно слово, которого нет в именах («ДТ»
+    вместо «дизель»), не должно обнулять выдачу. Слово засчитывается и по началу: «серы»
+    совпадает с «сера» по общей основе из первых четырёх букв.
+    """
     words = [word.casefold() for word in query.split() if word.strip()]
     if not words:
         raise QueryError("Пустой поисковый запрос.")
+    stems = [word[:4] if len(word) > 4 else word for word in words]
     by_code: dict[str, list[str]] = {}
     for code, name in _all_names(db):
         names = by_code.setdefault(code, [])
         if name != code:
             names.append(name)
-    found = []
-    for code in sorted(by_code):
-        text = " ".join([code, *by_code[code]]).casefold()
-        if all(word in text for word in words):
-            found.append({"code": code, "names": sorted(by_code[code])})
-            if len(found) >= limit:
-                break
-    return found
+    scored = []
+    for code, names in by_code.items():
+        text = " ".join([code, *names]).casefold()
+        score = sum(1 for stem in stems if stem in text)
+        if score > 0:
+            scored.append((-score, code))
+    scored.sort()
+    return [
+        {"code": code, "matched": -score, "names": sorted(by_code[code])}
+        for score, code in scored[:limit]
+    ]
