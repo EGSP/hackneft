@@ -64,6 +64,25 @@ class TracingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BootstrapConfig:
+    """Начальное заполнение справочников при запуске (bootstrap.py).
+
+    Заполняется только отсутствующее: записи, заведённые или изменённые через API, не
+    перезаписываются.
+    """
+
+    directory: Path | None
+    """Каталог с файлами секретов. Файл `yandex.env` в нём — секреты провайдера Yandex с теми же
+    ключами, что в env-файле xip; файл `mcp.json` — подключения MCP в формате MCP-клиентов.
+    Пусто — каталог не читается."""
+    default_model: str
+    """Идентификатор модели Yandex, заводимой вместе с провайдером."""
+    mcp_config: str
+    """Подключения MCP в формате MCP-клиентов, JSON-текстом. Дополняет `mcp.json` каталога:
+    адрес сервера в сети compose отличается от локального, поэтому задаётся окружением."""
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     host: str
     port: int
@@ -72,6 +91,7 @@ class AppConfig:
     agent: AgentConfig
     mcp: McpConfig
     tracing: TracingConfig
+    bootstrap: BootstrapConfig
 
 
 def load_env_file() -> None:
@@ -105,6 +125,11 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
             warn_schema_chars=reader.integer("MCP_WARN_SCHEMA_CHARS", 60_000, minimum=1),
         ),
         tracing=_tracing(reader),
+        bootstrap=BootstrapConfig(
+            directory=_resolve(directory) if (directory := reader.text("AI_BOOTSTRAP_DIR")) else None,
+            default_model=reader.text("AI_DEFAULT_MODEL") or "qwen3.6-35b-a3b/latest",
+            mcp_config=reader.text("AI_BOOTSTRAP_MCP"),
+        ),
     )
     if reader.problems:
         raise ConfigError(reader.problems)

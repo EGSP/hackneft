@@ -15,6 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hackneft_platform import handlers  # noqa: F401  (регистрирует обработчиков событий)
+from hackneft_platform.mcp_server import create_mcp_app
+from hackneft_platform.mcp_server import server as mcp_server
 from hackneft_platform.catalog import (
     SULFUR_LIMIT_MG_KG,
     SULFUR_LIMS_NAME,
@@ -34,13 +36,22 @@ from hackneft_platform.models import SensorData, SensorName, sensor_query
 # выполняется при старте (init_db) и после завершения (yield)
 
 
+# Приложение MCP-сервера создаётся до lifespan: его менеджер сессий существует только после
+# создания приложения, а запускается вместе с платформой.
+mcp_app = create_mcp_app()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
-    yield
+    async with mcp_server.session_manager.run():
+        yield
 
 # Создание экземпляра FastAPI с заголовком и указанием lifespan
 app = FastAPI(title="Hackneft Platform", lifespan=lifespan)
+# Инструменты агентов (mcp_server.py) — Streamable HTTP по адресу /mcp/. Монтируется до
+# остальных маршрутов: последний из них отдаёт index.html на любой путь.
+app.mount("/mcp", mcp_app)
 db_dependency = Depends(get_db)
 # Повторяющийся параметр запроса: ?name=ПАК&name=ЛИМС. Объявлен здесь, а не прямо
 # в сигнатуре эндпоинта: вызов в значении по умолчанию выполняется один раз при

@@ -1,11 +1,14 @@
 """Сборка служб сервиса и их остановка."""
 
+import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 
 import httpx2
 
 from ..agents.seed import seed_defaults
+from ..bootstrap import bootstrap_directories, start_mcp_bootstrap
 from ..agents.service import AgentDirectory
 from ..config import AppConfig
 from ..db.database import Database
@@ -46,6 +49,7 @@ class Services:
     tools: ToolsFactory
     runner: AgentRunner
     sessions: SessionsService
+    bootstrap_mcp: asyncio.Task[None]
 
 
 async def start_services(config: AppConfig) -> Services:
@@ -90,10 +94,12 @@ async def start_services(config: AppConfig) -> Services:
     # Сверка выполняется до того, как сервис начинает принимать запросы: проверки по
     # состоянию сессии устаревшего значения не видят.
     await runner.reconcile_on_startup()
+    await bootstrap_directories(config.bootstrap, providers, models)
     await models.relink()
     await models.check_problems()
     await seed_defaults(agents, instructions)
     availability.start()
+    bootstrap_mcp = start_mcp_bootstrap(config.bootstrap, mcp)
 
     return Services(
         config=config,
@@ -112,10 +118,14 @@ async def start_services(config: AppConfig) -> Services:
         tools=tools,
         runner=runner,
         sessions=sessions,
+        bootstrap_mcp=bootstrap_mcp,
     )
 
 
 async def stop_services(services: Services) -> None:
+    services.bootstrap_mcp.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await services.bootstrap_mcp
     await services.availability.stop()
     await services.runner.shutdown()
     await services.registry.aclose()

@@ -12,7 +12,8 @@
 # Пакет данных телеметрии и качества лежит вне репозитория и пробрасывается агрегатору
 # томом только для чтения. По умолчанию это каталог data на уровень выше корня репозитория;
 # другой путь задаётся переменной HACKNEFT_DATA_DIR. Файлы ЛИМС/ПАК в xlsx конвертируются
-# в lims_tags.csv и pack_tags.csv командой hackneft-convert-quality.
+# в lims_tags.csv и pack_tags.csv командой hackneft-convert-quality. Тот же каталог
+# пробрасывается ИИ-сервису: из него читается файл секретов Yandex yandex.env.
 
 services:
   ai:
@@ -22,10 +23,17 @@ services:
     env_file:
       - path: services/ai/.env
         required: false
+    environment:
+      # Начальное заполнение справочников (services/ai/src/hackneft_ai/bootstrap.py):
+      # провайдер Yandex по файлу yandex.env каталога данных, модель по умолчанию и
+      # подключение к MCP-серверу платформы с инструментами запросов к показаниям датчиков.
+      AI_BOOTSTRAP_DIR: /bootstrap
+      AI_BOOTSTRAP_MCP: '{"mcpServers": {"platform": {"url": "http://platform:8000/mcp/"}}}'
     ports:
       - "8100:8100"
     volumes:
       - ai-data:/data
+      - ${HACKNEFT_DATA_DIR:-../data}:/bootstrap:ro
     restart: unless-stopped
 
   platform:
@@ -62,6 +70,9 @@ services:
       # выгрузки. Шаг самой выгрузки — 10 минут.
       AGGREGATOR_INTERVAL_MINUTES: "10"
       AGGREGATOR_STEP_MINUTES: "10"
+      # Первичная закачка трёх суток истории при запуске с начального положения курсора:
+      # агенты сразу получают данные для анализа, включая суточные лабораторные анализы.
+      AGGREGATOR_PRELOAD_HOURS: "72"
     ports:
       - "8200:8200"
     volumes:
