@@ -63,6 +63,10 @@ class SettingsUpdate(BaseModel):
         return value.strip().replace(",", ".") if isinstance(value, str) else value
 
 
+class RealtimeUpdate(BaseModel):
+    enabled: bool
+
+
 class CursorUpdate(BaseModel):
     cursor: datetime
 
@@ -108,6 +112,19 @@ def create_app(config: AggregatorConfig) -> FastAPI:
         if payload.intervalMinutes is None and payload.stepMinutes is None:
             raise HTTPException(status_code=400, detail="Не передано ни одной настройки")
         await runner.update_settings(payload.intervalMinutes, payload.stepMinutes)
+        return runner.snapshot()
+
+    @app.put(
+        "/api/realtime",
+        summary="Включить или снять темп реального времени",
+        description=(
+            "Платформа включает режим на время работы советника и снимает по его завершении. "
+            "В режиме курсор продвигается на 1 минуту за 1 минуту реального времени; заданные "
+            "интервал и шаг сохраняются и действуют снова после снятия режима."
+        ),
+    )
+    async def set_realtime(payload: RealtimeUpdate) -> dict[str, object]:
+        await runner.set_realtime(payload.enabled)
         return runner.snapshot()
 
     @app.put("/api/cursor", summary="Установить положение курсора")

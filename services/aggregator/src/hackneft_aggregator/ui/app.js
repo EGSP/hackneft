@@ -134,8 +134,9 @@ function renderLive(state) {
           ["Состояние", mode(state)],
           ["Источники", indexing(state)],
           ["Следующий такт", moment(state.nextTickAt)],
-          ["Интервал опроса", `${minutes(state.intervalMinutes)} мин`],
-          ["Шаг курсора", `${minutes(state.stepMinutes)} мин`],
+          ["Реальное время", state.realtime ? label("caution", "Включено: работает советник") : "нет"],
+          ["Интервал опроса", `${minutes(state.effectiveIntervalMinutes)} мин`],
+          ["Шаг курсора", `${minutes(state.effectiveStepMinutes)} мин`],
           ["Ускорение", `×${minutes(state.speedup)}`],
           ["Начальная дата", moment(state.startDate)],
         ]),
@@ -156,6 +157,10 @@ function renderLive(state) {
     el("h2", { class: "p-heading--5" }, "Источники"),
     sourcesTable(state.sources),
   );
+
+  // Флажок отражает состояние сервиса при каждом обновлении: режим включает и снимает
+  // платформа, а не только пользователь этой страницы.
+  document.getElementById("realtime").checked = state.realtime;
 
   const status = document.getElementById("platform-status");
   const online = state.platform.online;
@@ -208,7 +213,7 @@ function notice(message) {
 function schedule(state) {
   // Обновление раз в половину интервала опроса, как задано для страницы. Нижний предел
   // защищает сервис от потока запросов при очень малом интервале.
-  const period = Math.max((state.intervalMinutes * 60 * 1000) / 2, MIN_REFRESH_MS);
+  const period = Math.max((state.effectiveIntervalMinutes * 60 * 1000) / 2, MIN_REFRESH_MS);
   if (timer !== null) clearTimeout(timer);
   timer = setTimeout(refresh, period);
 }
@@ -256,6 +261,10 @@ document.getElementById("settings").addEventListener("submit", (event) => {
     const step = parseMinutes("Шаг курсора", document.getElementById("step").value);
     return call("PATCH", "../api/settings", { intervalMinutes: interval, stepMinutes: step });
   });
+});
+
+document.getElementById("realtime").addEventListener("change", (event) => {
+  act(() => call("PUT", "../api/realtime", { enabled: event.target.checked }));
 });
 
 document.getElementById("cursor-form").addEventListener("submit", (event) => {
