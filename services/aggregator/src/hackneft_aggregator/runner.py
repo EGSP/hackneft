@@ -29,6 +29,9 @@ _LOOP_STEP_S = 0.5
 """Шаг ожидания в цикле. Цикл просыпается чаще, чем наступает такт, чтобы пауза и изменение
 интервала вступали в силу сразу, а не по завершении текущего ожидания."""
 
+_PRELOAD_CHUNK = timedelta(hours=6)
+"""Часть окна первичной закачки. Ограничивает объём одного чтения источников."""
+
 _HEALTH_PERIOD_S = 15.0
 """Период проверки доступности платформы. Не зависит от интервала опроса: состояние
 подключения нужно видеть и на паузе."""
@@ -114,6 +117,35 @@ class SimulationRunner:
                 for status in self._sources.statuses()
             ),
         )
+        if self._sources.ready:
+            await self._preload()
+
+    async def _preload(self) -> None:
+        """Первичная закачка истории (`AGGREGATOR_PRELOAD_HOURS`).
+
+        Выполняется только из начального положения курсора: после перезапуска с сохранённым
+        курсором история уже в платформе. Окно отправляется частями по шагу закачки теми же
+        средствами, что и такт, поэтому курсор продвигается вместе с отправкой, а отказ
+        платформы оставляет его на последней успешно отправленной части.
+        """
+        hours = self._config.preload_hours
+        if hours <= 0 or self._cursor != self._config.start_date:
+            return
+        until = self._config.start_date + timedelta(hours=hours)
+        accepted = 0
+        async with self._lock:
+            while self._cursor < until:
+                end = min(self._cursor + _PRELOAD_CHUNK, until)
+                report = await self._run_window(self._cursor, end)
+                if report.error is not None:
+                    logger.warning(
+                        "Первичная закачка прервана на %s: %s", report.window_start, report.error
+                    )
+                    return
+                accepted += report.accepted
+                self._accepted_total += report.accepted
+                self._duplicates_total += report.duplicates
+        logger.info("Первичная закачка: отправлено %s показаний до %s", accepted, until)
 
     # ─── Управление ───────────────────────────────────────────────────────────
 
