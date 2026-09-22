@@ -1,20 +1,23 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import desc, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hackneft_platform import handlers  # noqa: F401  (регистрирует обработчиков событий)
+from hackneft_platform.advisor.runtime import configured_service, run_worker
+from hackneft_platform.advisor.service import local_time, record_input
 from hackneft_platform.catalog import (
     SULFUR_LIMIT_MG_KG,
     SULFUR_LIMS_NAME,
@@ -37,7 +40,16 @@ from hackneft_platform.models import SensorData, SensorName, sensor_query
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
-    yield
+    service = configured_service()
+    app.state.advisor = service
+    worker = asyncio.create_task(run_worker(service))
+    try:
+        yield
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
+
 
 # Создание экземпляра FastAPI с заголовком и указанием lifespan
 app = FastAPI(title="Hackneft Platform", lifespan=lifespan)
@@ -54,16 +66,25 @@ names_query = Query(default=[])
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
+
 # Схема входных данных для создания записи показания датчика.
 # Только измерение: время, код датчика, значение, источник. Имя датчика сюда не входит —
 # оно регистрируется отдельно, в справочнике sensor_names (см. models.py).
 
 
 class SensorDataCreate(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     timestamp: datetime
     sensor_code: str
     value: float
     source: str
+
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return local_time(value)
+
 
 # Схема ответа: те же поля + идентификатор записи
 
@@ -71,11 +92,13 @@ class SensorDataCreate(BaseModel):
 class SensorDataResponse(SensorDataCreate):
     id: int
 
+
 # Схема ответа со списком "сырых" записей измерений (без имени датчика)
 
 
 class SensorDataListResponse(BaseModel):
     items: list[SensorDataResponse]
+
 
 # Схема одной строки представления sensor_query: измерение вместе с ОДНИМ из имён
 # датчика. Одна и та же запись измерения (timestamp, sensor_code) может встретиться
@@ -93,6 +116,7 @@ class SensorQueryItem(BaseModel):
 class SensorQueryListResponse(BaseModel):
     items: list[SensorQueryItem]
 
+
 # POST-эндпоинт создания новой записи показания датчика.
 
 
@@ -109,11 +133,25 @@ def create_sensor_data(
         value=payload.value,
         source=payload.source,
     )
-    
-    # После создания объекта SensorData добавляем его в сессию SQLAlchemy, чтобы подготовить к сохранению в базе данных.
+
+    # Измерение и вход для обработчиков сохраняются одной транзакцией.
     db.add(sensor_data)
 
     try:
+        db.flush()
+        record_input(
+            db,
+            [
+                SensorDataCreated(
+                    event_id=f"sensor-data:{sensor_data.id}",
+                    data_id=sensor_data.id,
+                    timestamp=sensor_data.timestamp,
+                    sensor_code=sensor_data.sensor_code,
+                    value=sensor_data.value,
+                    source=sensor_data.source,
+                )
+            ],
+        )
         db.commit()
     except IntegrityError:
         # UNIQUE(timestamp, sensor_code): повторная доставка одного и того же показания —
@@ -129,9 +167,7 @@ def create_sensor_data(
         if existing is None:
             # IntegrityError по другой причине (не по этому ограничению) — не подменяем
             # её ложным идемпотентным ответом.
-            raise HTTPException(
-                status_code=409, detail="Конфликт при сохранении записи"
-            ) from None
+            raise HTTPException(status_code=409, detail="Конфликт при сохранении записи") from None
 
         response.status_code = 200
         return SensorDataResponse(
@@ -142,7 +178,7 @@ def create_sensor_data(
             source=existing.source,
         )
 
-    # После успешного сохранения в БД обновляем объект из БД, чтобы получить сгенерированный идентификатор
+    # После сохранения обновляем объект из БД.
     db.refresh(sensor_data)
 
     # Публикация события уходит в фон: ответ клиенту не должен ждать,
@@ -169,6 +205,7 @@ def create_sensor_data(
         source=sensor_data.source,
     )
 
+
 # Схема запроса пакетной записи показаний. Поток телеметрии приходит отметками времени:
 # на одну отметку приходится по одному показанию с каждого датчика установки, то есть
 # несколько десятков записей. Поодиночке это столько же HTTP-запросов, поэтому пакет
@@ -177,6 +214,9 @@ def create_sensor_data(
 
 class SensorDataBulkCreate(BaseModel):
     items: list[SensorDataCreate]
+    observed_at: datetime | None = None
+    complete: bool = True
+
 
 # Схема ответа на пакетную запись. Возвращаются не сами записи, а их количества:
 # отправителю потока нужно знать, сколько показаний принято и сколько отброшено как
@@ -186,6 +226,7 @@ class SensorDataBulkCreate(BaseModel):
 class SensorDataBulkResponse(BaseModel):
     accepted: int
     duplicates: int
+
 
 # POST-эндпоинт пакетной записи показаний.
 # Повторная доставка обрабатывается так же, как в одиночном эндпоинте: нарушение
@@ -205,7 +246,14 @@ def create_sensor_data_bulk(
     db: Session = db_dependency,
 ) -> SensorDataBulkResponse:
     if not payload.items:
+        record_input(db, [], observed_at=payload.observed_at, complete=payload.complete)
+        db.commit()
         return SensorDataBulkResponse(accepted=0, duplicates=0)
+
+    if payload.observed_at is not None and any(
+        item.timestamp > local_time(payload.observed_at) for item in payload.items
+    ):
+        raise HTTPException(status_code=422, detail="Измерение позже времени окна")
 
     statement = (
         sqlite_insert(SensorData)
@@ -219,6 +267,22 @@ def create_sensor_data_bulk(
         )
     )
     saved = db.execute(statement, [item.model_dump() for item in payload.items]).all()
+    record_input(
+        db,
+        [
+            SensorDataCreated(
+                event_id=f"sensor-data:{row.id}",
+                data_id=row.id,
+                timestamp=row.timestamp,
+                sensor_code=row.sensor_code,
+                value=row.value,
+                source=row.source,
+            )
+            for row in saved
+        ],
+        observed_at=payload.observed_at,
+        complete=payload.complete,
+    )
     db.commit()
 
     # События публикуются по одному на запись: подписчики диспетчера рассчитаны на
@@ -237,9 +301,22 @@ def create_sensor_data_bulk(
             ),
         )
 
-    return SensorDataBulkResponse(
-        accepted=len(saved), duplicates=len(payload.items) - len(saved)
-    )
+    return SensorDataBulkResponse(accepted=len(saved), duplicates=len(payload.items) - len(saved))
+
+
+@app.get("/api/advisor/status")
+def advisor_status(request: Request) -> dict[str, Any]:
+    """Один статус установки: причины, пауза и единственный запуск."""
+    return dict(request.app.state.advisor.status())
+
+
+@app.get("/api/advisor/events")
+def advisor_events(
+    request: Request, limit: int = Query(default=50, ge=1, le=200)
+) -> dict[str, Any]:
+    """Журнал простых причин с объяснением ожидаемого влияния."""
+    return {"items": request.app.state.advisor.events(limit)}
+
 
 # GET-эндпоинт получения последней (самой свежей) записи показания датчика.
 # Читает sensor_data напрямую (не через sensor_query) — здесь не нужно имя датчика,
@@ -249,8 +326,7 @@ def create_sensor_data_bulk(
 @app.get("/api/sensor-data", response_model=SensorDataResponse)
 def get_latest_sensor_data(db: Session = db_dependency) -> SensorDataResponse:
     sensor_data = db.scalar(
-        select(SensorData).order_by(
-            desc(SensorData.timestamp), desc(SensorData.id)).limit(1)
+        select(SensorData).order_by(desc(SensorData.timestamp), desc(SensorData.id)).limit(1)
     )
     if sensor_data is None:
         raise HTTPException(status_code=404, detail="No sensor data found")
@@ -262,6 +338,7 @@ def get_latest_sensor_data(db: Session = db_dependency) -> SensorDataResponse:
         value=sensor_data.value,
         source=sensor_data.source,
     )
+
 
 # GET-эндпоинт получения записей показаний датчиков за интервал времени.
 # Запрос — к представлению sensor_query, а не к sensor_data: `name` может быть как
@@ -290,6 +367,7 @@ def get_sensor_data_range(
     rows = db.execute(query).mappings().all()
 
     return SensorQueryListResponse(items=[SensorQueryItem(**row) for row in rows])
+
 
 # GET-эндпоинт получения всей истории записей показаний датчиков.
 # Тоже через sensor_query: каждое измерение приходит с одним из своих имён,
@@ -360,9 +438,7 @@ def get_sensor_data_view(
     # представления по разу на каждый синоним.
     requested = list(dict.fromkeys(name))
     code_rows = db.execute(
-        select(SensorName.name, SensorName.sensor_code).where(
-            SensorName.name.in_(requested)
-        )
+        select(SensorName.name, SensorName.sensor_code).where(SensorName.name.in_(requested))
     ).all()
     code_by_name = {row.name: row.sensor_code for row in code_rows}
 
@@ -463,16 +539,12 @@ def create_sensor_name(
     code = payload.sensor_code.strip()
     name = payload.name.strip()
     if not code or not name:
-        raise HTTPException(
-            status_code=400, detail="Код датчика и синоним не могут быть пустыми"
-        )
+        raise HTTPException(status_code=400, detail="Код датчика и синоним не могут быть пустыми")
 
     # Синоним добавляется только существующему датчику: строка (код, код) заводится
     # при инициализации БД из перечня catalog.KNOWN_SENSOR_CODES.
     known = db.scalar(
-        select(SensorName).where(
-            SensorName.sensor_code == code, SensorName.name == code
-        )
+        select(SensorName).where(SensorName.sensor_code == code, SensorName.name == code)
     )
     if known is None:
         raise HTTPException(status_code=404, detail=f"Датчик {code} не зарегистрирован")
@@ -487,9 +559,7 @@ def create_sensor_name(
     taken = db.scalar(select(SensorName).where(SensorName.name == name))
     if taken is not None:
         if taken.sensor_code == code:
-            raise HTTPException(
-                status_code=409, detail=f"Синоним {name} у датчика {code} уже есть"
-            )
+            raise HTTPException(status_code=409, detail=f"Синоним {name} у датчика {code} уже есть")
         if taken.sensor_code == taken.name:
             # Строка, где имя совпадает с кодом, обозначает сам датчик: перенести её
             # означало бы переименовать датчик, а справочник имён для этого не служит.
@@ -542,9 +612,7 @@ def delete_sensor_name(
         )
 
     existing = db.scalar(
-        select(SensorName).where(
-            SensorName.sensor_code == sensor_code, SensorName.name == name
-        )
+        select(SensorName).where(SensorName.sensor_code == sensor_code, SensorName.name == name)
     )
     if existing is None:
         raise HTTPException(status_code=404, detail="Такого синонима нет")
@@ -601,9 +669,7 @@ async def stream_sensor_events(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
                 try:
-                    reading = await asyncio.wait_for(
-                        queue.get(), timeout=STREAM_KEEPALIVE_SECONDS
-                    )
+                    reading = await asyncio.wait_for(queue.get(), timeout=STREAM_KEEPALIVE_SECONDS)
                 except TimeoutError:
                     # Комментарий SSE: промежуточный узел не должен разорвать
                     # соединение за время бездействия.

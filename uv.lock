@@ -636,6 +636,7 @@ source = { editable = "services/platform" }
 dependencies = [
     { name = "fastapi" },
     { name = "hackneft-common" },
+    { name = "httpx" },
     { name = "python-dotenv" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
@@ -645,6 +646,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "hackneft-common", editable = "libs/common" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },

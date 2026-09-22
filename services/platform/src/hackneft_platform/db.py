@@ -20,12 +20,11 @@ _database_file.parent.mkdir(parents=True, exist_ok=True)
 database_url = f"sqlite:///{_database_file.as_posix()}"
 
 # Создаём движок SQLAlchemy.
-# Для SQLite отключаем проверку "check_same_thread", чтобы соединение можно было использовать из разных потоков (нужно для FastAPI).
+# SQLite-соединения используются из разных потоков FastAPI.
 # Для остальных СУБД дополнительные аргументы не требуются.
 engine = create_engine(
     database_url,
-    connect_args={"check_same_thread": False} if database_url.startswith(
-        "sqlite") else {},
+    connect_args={"check_same_thread": False} if database_url.startswith("sqlite") else {},
 )
 
 
@@ -56,6 +55,7 @@ def get_db() -> Generator[Session, None, None]:
     with SessionLocal() as session:
         yield session
 
+
 # Инициализация схемы БД. Порядок важен: сначала таблицы (create_all), потом их
 # содержимое (seed справочника имён), потом представление поверх них (CREATE VIEW) —
 # представление ссылается на обе таблицы и не создастся, если их ещё нет.
@@ -63,6 +63,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
+    from hackneft_platform.advisor import schema  # noqa: F401
     from hackneft_platform.models import SensorData, SensorName
 
     _ = SensorData, SensorName
@@ -91,24 +92,17 @@ def _seed_sensor_names() -> None:
     from hackneft_platform.catalog import KNOWN_SENSOR_CODES, SENSOR_SYNONYMS
 
     pairs = [(code, code) for code in KNOWN_SENSOR_CODES]
-    pairs += [
-        (code, synonym)
-        for code, synonyms in SENSOR_SYNONYMS.items()
-        for synonym in synonyms
-    ]
+    pairs += [(code, synonym) for code, synonyms in SENSOR_SYNONYMS.items() for synonym in synonyms]
 
     with engine.begin() as connection:
         for code, name in pairs:
             connection.execute(
-                text(
-                    "DELETE FROM sensor_names WHERE name = :name AND sensor_code <> :code"
-                ),
+                text("DELETE FROM sensor_names WHERE name = :name AND sensor_code <> :code"),
                 {"code": code, "name": name},
             )
             connection.execute(
                 text(
-                    "INSERT OR IGNORE INTO sensor_names (sensor_code, name) "
-                    "VALUES (:code, :name)"
+                    "INSERT OR IGNORE INTO sensor_names (sensor_code, name) VALUES (:code, :name)"
                 ),
                 {"code": code, "name": name},
             )

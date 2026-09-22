@@ -23,8 +23,6 @@ def database_path() -> Path:
 def ai_service_url() -> str:
     """Адрес ИИ-сервиса из `AI_SERVICE_URL`, по умолчанию `http://localhost:8100`.
 
-    Предназначен для подписчика `handlers.ai_notify`, а не для ядра платформы. Сам
-    подписчик пока обращений не выполняет (тело обработчика пустое), поэтому во время
-    работы платформы эта настройка не читается.
+    Используется работником advisor/runtime.py после единого допуска запуска.
     """
     return (os.getenv("AI_SERVICE_URL") or "http://localhost:8100").rstrip("/")

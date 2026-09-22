@@ -203,9 +203,17 @@ class SimulationRunner:
         accepted = 0
         duplicates = 0
         limit = self._config.batch_limit
-        for position in range(0, len(readings), limit):
+        # Пустой финальный пакет закрывает всё окно, в том числе окно без данных.
+        # До него платформа не принимает частичный HTTP-пакет за полный снимок.
+        chunks = [readings[p : p + limit] for p in range(0, len(readings), limit)]
+        chunks.append([])
+        for chunk in chunks:
             try:
-                result = await self._platform.push(readings[position : position + limit])
+                result = await self._platform.push(
+                    chunk,
+                    observed_at=end,
+                    complete=not chunk,
+                )
             except PlatformUnavailable as failure:
                 self._platform_online = False
                 self._platform_checked_at = _now()
@@ -255,9 +263,7 @@ class SimulationRunner:
                 "url": self._platform.base_url,
                 "online": self._platform_online,
                 "checkedAt": (
-                    self._platform_checked_at.isoformat()
-                    if self._platform_checked_at
-                    else None
+                    self._platform_checked_at.isoformat() if self._platform_checked_at else None
                 ),
             },
             "lastTick": (
@@ -283,9 +289,7 @@ class SimulationRunner:
                     "rowCount": status.row_count,
                     "sensorCount": status.sensor_count,
                     "firstTimestamp": (
-                        status.first_timestamp.isoformat()
-                        if status.first_timestamp
-                        else None
+                        status.first_timestamp.isoformat() if status.first_timestamp else None
                     ),
                     "lastTimestamp": (
                         status.last_timestamp.isoformat() if status.last_timestamp else None

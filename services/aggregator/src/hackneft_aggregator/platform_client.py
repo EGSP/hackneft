@@ -6,6 +6,8 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 import httpx
 
@@ -49,9 +51,15 @@ class PlatformClient:
             return False
         return response.status_code == 200
 
-    async def push(self, readings: list[Reading]) -> PushResult:
+    async def push(
+        self,
+        readings: list[Reading],
+        *,
+        observed_at: datetime | None = None,
+        complete: bool = True,
+    ) -> PushResult:
         """Отправляет пакет показаний запросом `POST /api/sensor-data/bulk`."""
-        payload = {
+        payload: dict[str, Any] = {
             "items": [
                 {
                     "timestamp": reading.timestamp.isoformat(),
@@ -62,6 +70,9 @@ class PlatformClient:
                 for reading in readings
             ]
         }
+        if observed_at is not None:
+            payload["observed_at"] = observed_at.isoformat()
+            payload["complete"] = complete
         try:
             response = await self._client.post(
                 f"{self._base_url}/api/sensor-data/bulk", json=payload
