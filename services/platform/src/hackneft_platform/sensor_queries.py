@@ -9,19 +9,17 @@
 с его собственной отметкой времени. Редкие ряды (лабораторные анализы — раз в сутки) иначе
 выглядели бы для агента отсутствующими, хотя последнее известное значение у них есть.
 
-Выборки различаются только формой ответа: сырые точки, сводка по окну и ряд, усреднённый по
-интервалам. Формы нужны для сравнения цены и качества ответов агента.
+Показания отдаются как есть, без усреднения и прореживания.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from statistics import fmean
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from hackneft_platform.catalog import SENSOR_SYNONYMS
+from hackneft_platform.catalog import SENSOR_SYNONYMS, SOURCE_NAMES
 from hackneft_platform.models import SensorData, SensorName
 
 MAX_SENSORS = 12
@@ -163,44 +161,14 @@ def query_window(
     return WindowQuery(cursor=moment, start=start, sensors=sensors, unknown=unknown)
 
 
-def thin(points: list[Point], limit: int) -> list[Point]:
-    """Прореживает ряд до `limit` точек равномерно, сохраняя первую и последнюю."""
-    if len(points) <= limit:
-        return points
-    if limit == 1:
-        return [points[-1]]
-    step = (len(points) - 1) / (limit - 1)
-    return [points[round(index * step)] for index in range(limit)]
-
-
-def summarize(points: list[Point]) -> dict[str, object]:
-    values = [point.value for point in points]
-    first, last = points[0], points[-1]
-    return {
-        "count": len(points),
-        "first": [fmt_time(first.timestamp), round(first.value, 4)],
-        "last": [fmt_time(last.timestamp), round(last.value, 4)],
-        "min": round(min(values), 4),
-        "max": round(max(values), 4),
-        "mean": round(fmean(values), 4),
-        "change": round(last.value - first.value, 4),
-    }
-
-
-def buckets(
-    points: list[Point], start: datetime, cursor: datetime, bucket: timedelta
-) -> dict[datetime, float]:
-    """Средние значения по интервалам. Ключ — конец интервала; интервалы выровнены по курсору."""
-    sums: dict[int, list[float]] = {}
-    for point in points:
-        # Номер интервала, отсчитанный назад от курсора: показание в момент курсора — интервал 0.
-        index = int((cursor - point.timestamp) / bucket)
-        sums.setdefault(index, []).append(point.value)
-    return {cursor - bucket * index: fmean(values) for index, values in sums.items()}
-
-
-def search_catalog(db: Session, query: str, limit: int) -> list[dict[str, object]]:
+def search_catalog(
+    db: Session, query: str, limit: int, only_with_synonyms: bool
+) -> list[dict[str, object]]:
     """Поиск датчиков по словам запроса в коде и именах.
+
+    `only_with_synonyms` оставляет датчики, у которых есть синоним сверх исходных названий
+    (catalog.SOURCE_NAMES): справочник насчитывает сотни датчиков, а выделенных по назначению —
+    единицы. Пустой запрос перечисляет все датчики, прошедшие отбор.
 
     Датчики упорядочены по числу совпавших слов, а не отбираются по совпадению всех: агент
     пишет запрос своими словами («сера дизель»), и одно слово, которого нет в именах («ДТ»
@@ -208,8 +176,6 @@ def search_catalog(db: Session, query: str, limit: int) -> list[dict[str, object
     совпадает с «сера» по общей основе из первых четырёх букв.
     """
     words = [word.casefold() for word in query.split() if word.strip()]
-    if not words:
-        raise QueryError("Пустой поисковый запрос.")
     stems = [word[:4] if len(word) > 4 else word for word in words]
     by_code: dict[str, list[str]] = {}
     for code, name in _all_names(db):
@@ -218,12 +184,17 @@ def search_catalog(db: Session, query: str, limit: int) -> list[dict[str, object
             names.append(name)
     scored = []
     for code, names in by_code.items():
+        if only_with_synonyms:
+            source = SOURCE_NAMES.get(code, frozenset({code}))
+            if all(name in source for name in names):
+                continue
         text = " ".join([code, *names]).casefold()
         score = sum(1 for stem in stems if stem in text)
-        if score > 0:
-            scored.append((-score, code))
+        if stems and score == 0:
+            continue
+        scored.append((-score, code))
     scored.sort()
     return [
-        {"code": code, "matched": -score, "names": sorted(by_code[code])}
+        {"code": code, **({"matched": -score} if stems else {}), "names": sorted(by_code[code])}
         for score, code in scored[:limit]
     ]

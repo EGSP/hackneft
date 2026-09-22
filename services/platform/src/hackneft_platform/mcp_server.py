@@ -4,21 +4,18 @@
 предоставляет платформа, а ИИ-сервис подключается к ним как к любому серверу MCP
 (Streamable HTTP, путь `/mcp`).
 
-Инструмент показаний сделан в трёх вариантах, различающихся формой ответа, — чтобы сравнить,
-какой из них даёт агенту достаточный ответ при меньшем расходе токенов:
+Инструменты отдают только исходные данные и сами ничего не вычисляют: `sensor_series` —
+показания как есть, `sensor_catalog` — коды и имена датчиков из справочника. Сводки и усреднения
+отвергнуты по итогам сравнения на агентских сессиях: агент делал по ним выводы, которые
+исходные точки не подтверждали (например, «тенденцию» по разности первого и последнего
+значения зашумлённого ряда). Обработку данных агент выполняет сам, видя исходные показания.
 
-- `sensor_series` — сырые точки ряда, прореженные до заданного числа;
-- `sensor_summary` — сводка по окну без точек: последнее значение, минимум, максимум,
-  среднее, изменение за окно;
-- `sensor_resampled` — ряд, усреднённый по интервалам, общей таблицей для всех датчиков.
-
-Общая часть — окно назад от курсора и последнее значение до окна для датчика без показаний в
-окне — описана в sensor_queries.py.
+Окно назад от курсора и последнее значение до окна для датчика без показаний в окне описаны в
+sensor_queries.py.
 """
 
 import os
 from collections.abc import Callable
-from datetime import timedelta
 from typing import Annotated
 
 from anyio import to_thread
@@ -33,19 +30,18 @@ from hackneft_platform.sensor_queries import (
     QueryError,
     SensorWindow,
     WindowQuery,
-    buckets,
     fmt_time,
     query_window,
     search_catalog,
-    summarize,
-    thin,
 )
 
 _INSTRUCTIONS = """\
 Показания датчиков установок АВТ и 24-2000 (гидроочистка), поточного анализатора (ПАК) и
 лабораторных анализов (ЛИМС). Код датчика — приставка источника и тег: avt_*, ht_*, pack_*,
-lims_*. Если код неизвестен, найди его инструментом sensor_catalog. Синонимы «ПАК» и «ЛИМС»
-обозначают ряды серы в гидроочищенном дизельном топливе (норма — не более 10 мг/кг).
+lims_*. Если код неизвестен, найди его инструментом sensor_catalog; по умолчанию он ищет только
+среди датчиков с синонимами, для поиска по всем передай only_with_synonyms=false.
+Синонимы «ПАК» и «ЛИМС» обозначают ряды серы в гидроочищенном дизельном топливе (норма — не
+более 10 мг/кг).
 
 Окно отсчитывается назад от курсора. Без курсора используется текущий момент — время последнего
 полученного показания. Показания позже курсора не выдаются. Время ЛИМС — момент отбора пробы;
@@ -121,16 +117,19 @@ def _last_known(sensor: SensorWindow) -> dict[str, object]:
 
 @server.tool(
     description=(
-        "Сырые показания датчиков в окне назад от курсора: пары [время, значение]. Длинный ряд "
-        "прореживается равномерно до max_points точек. Если в окне нет показаний, возвращается "
-        "последнее известное значение до окна (last_known)."
+        "Исходные показания датчиков в окне назад от курсора: пары [время, значение] без "
+        "обработки. Если показаний в окне больше max_points, возвращаются последние max_points "
+        "и поле truncated; count — число показаний в окне. Если в окне нет показаний, "
+        "возвращается последнее известное значение до окна (last_known)."
     )
 )
 async def sensor_series(
     sensors: Sensors,
     window_minutes: Window = 180,
     cursor: Cursor = None,
-    max_points: Annotated[int, Field(ge=1, le=200, description="Предел точек на датчик")] = 36,
+    max_points: Annotated[
+        int, Field(ge=1, le=500, description="Предел точек на датчик, берутся последние")
+    ] = 72,
 ) -> dict[str, object]:
     def work(db: Session) -> dict[str, object]:
         query = query_window(db, sensors, window_minutes, cursor)
@@ -138,10 +137,13 @@ async def sensor_series(
         for sensor in query.sensors:
             item = _sensor_head(sensor)
             if sensor.points:
-                shown = thin(sensor.points, max_points)
+                shown = sensor.points[-max_points:]
                 item["count"] = len(sensor.points)
                 if len(shown) < len(sensor.points):
-                    item["thinned_to"] = len(shown)
+                    item["truncated"] = (
+                        f"показаны последние {len(shown)} из {len(sensor.points)}; "
+                        "для более ранних сдвинь курсор назад"
+                    )
                 item["points"] = [[fmt_time(p.timestamp), round(p.value, 4)] for p in shown]
             else:
                 item |= _last_known(sensor)
@@ -153,93 +155,31 @@ async def sensor_series(
 
 @server.tool(
     description=(
-        "Сводка показаний датчиков в окне назад от курсора без сырых точек: число показаний, "
-        "первое и последнее [время, значение], минимум, максимум, среднее и изменение за окно. "
-        "Самый дешёвый способ узнать текущее значение и тенденцию. Если в окне нет показаний, "
-        "возвращается последнее известное значение до окна (last_known)."
-    )
-)
-async def sensor_summary(
-    sensors: Sensors,
-    window_minutes: Window = 180,
-    cursor: Cursor = None,
-) -> dict[str, object]:
-    def work(db: Session) -> dict[str, object]:
-        query = query_window(db, sensors, window_minutes, cursor)
-        items = []
-        for sensor in query.sensors:
-            item = _sensor_head(sensor)
-            item |= summarize(sensor.points) if sensor.points else _last_known(sensor)
-            items.append(item)
-        return _header(query) | {"sensors": items}
-
-    return await _run(work)
-
-
-@server.tool(
-    description=(
-        "Показания датчиков в окне назад от курсора, усреднённые по интервалам bucket_minutes, "
-        "одной таблицей: строка — конец интервала, столбцы — датчики, null — нет показаний в "
-        "интервале. Удобно для сравнения нескольких датчиков во времени. Датчики без показаний "
-        "в окне перечислены в last_known с последним значением до окна."
-    )
-)
-async def sensor_resampled(
-    sensors: Sensors,
-    window_minutes: Window = 180,
-    cursor: Cursor = None,
-    bucket_minutes: Annotated[
-        float, Field(gt=0, description="Длина интервала усреднения в минутах")
-    ] = 30,
-) -> dict[str, object]:
-    def work(db: Session) -> dict[str, object]:
-        query = query_window(db, sensors, window_minutes, cursor)
-        bucket = timedelta(minutes=bucket_minutes)
-        if (query.cursor - query.start) / bucket > 200:
-            raise QueryError("Больше 200 интервалов: увеличь bucket_minutes или сократи окно.")
-
-        with_data = [sensor for sensor in query.sensors if sensor.points]
-        columns = [
-            sensor.requested if sensor.code == sensor.requested
-            else f"{sensor.requested} ({sensor.code})"
-            for sensor in with_data
-        ]
-        series = [buckets(s.points, query.start, query.cursor, bucket) for s in with_data]
-        ends = sorted({end for values in series for end in values})
-        rows = [
-            [fmt_time(end), *(
-                round(values[end], 4) if end in values else None for values in series
-            )]
-            for end in ends
-        ]
-        result = _header(query) | {
-            "bucket_minutes": bucket_minutes,
-            "columns": ["interval_end", *columns],
-            "rows": rows,
-        }
-        missing = [sensor for sensor in query.sensors if not sensor.points]
-        if missing:
-            result["last_known"] = [
-                _sensor_head(sensor) | _last_known(sensor) for sensor in missing
-            ]
-        return result
-
-    return await _run(work)
-
-
-@server.tool(
-    description=(
-        "Поиск датчиков по коду, названию или синониму. Датчики упорядочены по числу "
-        "совпавших слов запроса (matched). Возвращает коды и имена датчиков."
+        "Поиск датчиков по коду, названию или синониму. По умолчанию (only_with_synonyms=true) "
+        "ищет только среди датчиков, выделенных синонимами по назначению (например «ПАК», "
+        "«ЛИМС», «Сера в сырье»); без запроса перечисляет их все. Если нужного датчика нет, "
+        "повтори с only_with_synonyms=false — поиск пойдёт по всем датчикам установок АВТ и "
+        "24-2000, ПАК и ЛИМС. Датчики упорядочены по числу совпавших слов (matched)."
     )
 )
 async def sensor_catalog(
-    query: Annotated[str, Field(min_length=1, description="Слова поиска, например 'сера'")],
+    query: Annotated[
+        str, Field(description="Слова поиска, например 'сера'. Пусто — все прошедшие отбор")
+    ] = "",
+    only_with_synonyms: Annotated[
+        bool,
+        Field(description="Только датчики с синонимами сверх исходных названий"),
+    ] = True,
     limit: Annotated[int, Field(ge=1, le=50)] = 20,
 ) -> dict[str, object]:
     def work(db: Session) -> dict[str, object]:
-        found = search_catalog(db, query, limit)
-        return {"found": len(found), "sensors": found}
+        found = search_catalog(db, query, limit, only_with_synonyms)
+        result: dict[str, object] = {"found": len(found), "sensors": found}
+        if not found and only_with_synonyms:
+            result["hint"] = (
+                "Среди датчиков с синонимами не найдено: повтори с only_with_synonyms=false."
+            )
+        return result
 
     return await _run(work)
 
