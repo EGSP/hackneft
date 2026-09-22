@@ -13,6 +13,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 import httpx2
 import openai
@@ -89,7 +90,21 @@ class OpenAICompatibleProvider:
         messages: Sequence[AgentMessage],
         tools: Sequence[ToolSpec],
         settings: ChatSettings,
+        *,
+        result_schema: Mapping[str, Any] | None = None,
+        reasoning_effort: str | None = None,
     ) -> ModelReply:
+        # Формат ответа по схеме — структурированный вывод Chat Completions. Строгий режим
+        # не включается: он требует от схемы ограничений, которых вызывающая сторона может
+        # не соблюдать, а соответствие схеме сервис всё равно проверяет сам.
+        response_format: Any = (
+            openai.omit
+            if result_schema is None
+            else {
+                "type": "json_schema",
+                "json_schema": {"name": "result", "schema": dict(result_schema)},
+            }
+        )
         try:
             authorization = await self._credentials.authorization()
             response = await with_retry(
@@ -99,6 +114,8 @@ class OpenAICompatibleProvider:
                     temperature=settings.temperature,
                     max_tokens=openai.omit if settings.max_tokens is None else settings.max_tokens,
                     tools=[_provider_tool(spec) for spec in tools] if tools else openai.omit,
+                    response_format=response_format,
+                    reasoning_effort=openai.omit if reasoning_effort is None else reasoning_effort,  # type: ignore[arg-type]
                     # Без учётных данных заголовок снимается совсем, а не несёт заполнитель.
                     extra_headers={
                         "Authorization": openai.omit if authorization is None else authorization

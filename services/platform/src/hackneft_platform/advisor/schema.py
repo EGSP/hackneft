@@ -34,7 +34,8 @@ class AdvisorEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[str] = mapped_column(String, index=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime)
+    # Индекс для выборки за период: таймлайн главной страницы и поиск по журналу.
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     severity: Mapped[str] = mapped_column(String)
     reason: Mapped[str]
     consequence: Mapped[str]
@@ -45,7 +46,7 @@ class AdvisorRun(Base):
     __tablename__ = "advisor_runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    requested_at: Mapped[datetime] = mapped_column(DateTime)
+    requested_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String, index=True)
@@ -54,3 +55,29 @@ class AdvisorRun(Base):
     session_id: Mapped[str | None] = mapped_column(String)
     result: Mapped[Any | None] = mapped_column(JSON)
     error: Mapped[str | None]
+
+
+class AdvisorAdvice(Base):
+    """Совет советника — карточка для оператора.
+
+    Актуален последний совет: новый делает прежние неактуальными без отметок в записях.
+    """
+
+    __tablename__ = "advisor_advices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[str | None] = mapped_column(String)
+    # Время данных, к которому относится совет, — момент допуска запуска.
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime)
+    # Тип совета (advice.AdviceType). Столбец сохранил прежнее имя: create_all существующие
+    # таблицы не меняет.
+    decision: Mapped[str] = mapped_column(String)
+    # Прежняя градация риска; больше не используется и заполняется типом совета.
+    risk: Mapped[str] = mapped_column(String)
+    headline: Mapped[str]
+    # Причины запуска: какие события привели к совету.
+    reasons: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    # Карточка целиком (advice.AdviceCard).
+    card: Mapped[dict[str, Any]] = mapped_column(JSON)

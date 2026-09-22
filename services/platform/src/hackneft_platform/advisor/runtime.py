@@ -1,17 +1,18 @@
 """Один работник: сначала все проверки, затем максимум одна сессия советника."""
 
 import asyncio
-import json
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
 
-from hackneft_platform.config import ai_service_url
+from hackneft_platform.config import aggregator_url, ai_service_url
 from hackneft_platform.db import SessionLocal
 
-from .rules import Policy
+from .advice import ADVICE_SCHEMA
+from .rules import NAMES, SULFUR_THRESHOLD, UNITS, Policy
 from .service import AdvisorService
 
 logger = logging.getLogger(__name__)
@@ -25,26 +26,103 @@ def configured_service() -> AdvisorService:
     return AdvisorService(SessionLocal, policy)
 
 
+# Инструменты, которые платформа открывает советнику: запуск агентов защиты и производства.
+ADVISOR_TOOLS = ["list_agents", "run_agent"]
+
+
 def task_for(run: dict[str, Any]) -> str:
-    return (
-        "Ты советник оператора установки гидроочистки 24-2000. Рассмотри все причины "
-        "вместе. Собери одну сводку по результатам дочерних агентов согласно карточке. "
-        "Если вызов агентов недоступен, явно сообщи об этом и не имитируй результаты. "
-        "Структура ответа: что изменилось; возможное влияние на качество; что проверить "
-        "или сделать; когда оценить эффект. Не выдавай исторические диапазоны за "
-        "технологические пределы. Не придумывай допустимые уставки. Новое значение "
-        "измерения не доказывает действие оператора. ЛИМС относится ко времени отбора "
-        "пробы, а не к текущему времени; ПАК и Q21 не взаимозаменяемы. Не заявляй "
-        "причинный эффект как доказанный. Норма серы продукта — не более 10 мг/кг. "
-        "При недостатке сведений назови их. Управление оборудованием не выполняй.\n"
-        + json.dumps({"reasons": run["reasons"], "snapshot": run["snapshot"]}, ensure_ascii=False)
-    )
+    """Постановка задачи советнику: только причины запуска и время данных.
+
+    Роль, порядок работы и правила записаны в системном промпте советника (ИИ-сервис,
+    agents/seed.py) и здесь не повторяются. Данные запуска передаются отдельно полем input.
+    """
+    lines = [
+        f"- {reason.get('reason', '')}. {reason.get('consequence', '')}".rstrip()
+        for reason in run["reasons"]
+    ]
+    at = run["snapshot"].get("at") or "—"
+    return f"Время данных: {at}. Причины запуска:\n" + "\n".join(lines)
+
+
+def input_for(run: dict[str, Any]) -> dict[str, Any]:
+    """Исходные данные запуска: их дословно получают агенты, запущенные советником.
+
+    Показания записаны компактно — время и значение без служебных полей: история за два
+    часа по восьми датчикам иначе занимает десятки тысяч символов контекста агента.
+    """
+    snapshot = run["snapshot"]
+    return {
+        "reasons": run["reasons"],
+        "at": snapshot.get("at"),
+        "unit": snapshot.get("unit"),
+        "sulfur_level": snapshot.get("sulfur_level"),
+        "sulfur_threshold": SULFUR_THRESHOLD,
+        # Названия и единицы кодов: без них в совете появляются числа без единиц.
+        "parameters": {code: {"name": NAMES[code], "unit": UNITS.get(code)} for code in NAMES},
+        "latest": {
+            code: {"at": reading["at"], "value": reading["value"]}
+            for code, reading in snapshot.get("readings", {}).items()
+        },
+        "history": {
+            code: [[reading["at"], reading["value"]] for reading in readings]
+            for code, readings in snapshot.get("recent_history", {}).items()
+        },
+        "policy": snapshot.get("policy"),
+    }
+
+
+# Состояния запуска, при которых советник работает и агрегатор держит темп реального времени.
+# Запуск с неизвестным исходом («unknown») флаг не держит: советник уже не работает.
+WORKING = ("queued", "sending", "running")
+
+REALTIME_RESYNC_S = 30.0
+"""Период повторной установки флага: агрегатор после перезапуска флага не помнит."""
+
+REALTIME_RETRY_S = 10.0
+"""Пауза после отказа агрегатора: недоступный агрегатор не должен задерживать каждый шаг
+работника на время ожидания ответа."""
+
+
+class RealtimeFlag:
+    """Флаг реального времени агрегатора: включён, пока советник работает.
+
+    Состояние отправляется при изменении и повторно раз в период. Отказ агрегатора советника
+    не останавливает: флаг будет установлен следующей попыткой.
+    """
+
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self.client = client
+        self.sent: bool | None = None
+        """Последнее принятое агрегатором состояние; пусто — неизвестно или отказ."""
+        self.sent_at = -REALTIME_RESYNC_S
+
+    async def sync(self, enabled: bool) -> None:
+        elapsed = time.monotonic() - self.sent_at
+        if enabled == self.sent and elapsed < REALTIME_RESYNC_S:
+            return
+        if self.sent is None and elapsed < REALTIME_RETRY_S:
+            return
+        try:
+            response = await self.client.put("/api/realtime", json={"enabled": enabled})
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            logger.warning("Флаг реального времени агрегатора не установлен: %s", error)
+            self.sent = None
+        else:
+            self.sent = enabled
+        self.sent_at = time.monotonic()
 
 
 class AdvisorWorker:
-    def __init__(self, service: AdvisorService, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        service: AdvisorService,
+        client: httpx.AsyncClient,
+        realtime: RealtimeFlag | None = None,
+    ) -> None:
         self.service = service
         self.client = client
+        self.realtime = realtime
 
     async def step(self) -> None:
         await asyncio.to_thread(self.service.process)
@@ -52,6 +130,8 @@ class AdvisorWorker:
         if run is None:
             await asyncio.to_thread(self.service.reserve)
             run = await asyncio.to_thread(self.service.active_run)
+        if self.realtime is not None:
+            await self.realtime.sync(run is not None and run["status"] in WORKING)
         if run is None:
             return
         if run["status"] == "queued":
@@ -70,7 +150,9 @@ class AdvisorWorker:
             "kind": "agent",
             "title": f"24-2000 / {run['id']}",
             "task": task_for(run),
-            "tools": [],
+            "input": input_for(run),
+            "resultSchema": ADVICE_SCHEMA,
+            "tools": ADVISOR_TOOLS,
             "agent": os.getenv("ADVISOR_AGENT_ID") or "advisor",
         }
         try:
@@ -137,8 +219,11 @@ class AdvisorWorker:
 
 
 async def run_worker(service: AdvisorService) -> None:
-    async with httpx.AsyncClient(base_url=ai_service_url(), timeout=15) as client:
-        worker = AdvisorWorker(service, client)
+    async with (
+        httpx.AsyncClient(base_url=ai_service_url(), timeout=15) as client,
+        httpx.AsyncClient(base_url=aggregator_url(), timeout=3) as aggregator,
+    ):
+        worker = AdvisorWorker(service, client, RealtimeFlag(aggregator))
         while True:
             try:
                 await worker.step()

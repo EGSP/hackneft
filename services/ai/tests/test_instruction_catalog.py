@@ -39,7 +39,7 @@ def test_existing_catalog_migration_and_restart(tmp_path: Path) -> None:
             assert set(CAUSE_IDS) <= {row.id for row in catalog}
             advisor = await agents.require("advisor")
             assert advisor.model == "chosen-model"
-            assert advisor.instructions == [*CAUSE_IDS, "custom"]
+            assert advisor.instructions == ["custom"]
             assert (await agents.require("protection")).instructions[-1] == "protection-mode"
             assert (await agents.require("production")).instructions[-1] == "production-mode"
             async with db.read() as tx:
@@ -57,7 +57,7 @@ def test_existing_catalog_migration_and_restart(tmp_path: Path) -> None:
             edited = await instructions.require("sulfur-risk")
             assert edited.description == "Новое описание"
             assert edited.text == "Изменено оператором"
-            prompt = await agents.session_prompt(await agents.require("advisor"))
+            prompt = await agents.session_prompt(await agents.require("protection"))
             assert "Изменено оператором" in prompt
         finally:
             await db.close()

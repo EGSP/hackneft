@@ -3,6 +3,7 @@ import { Layout, Menu, Typography } from 'antd'
 import { useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
+import { AdvisorPanel } from './advisor/AdvisorPanel'
 import { Dashboard } from './pages/Dashboard'
 import { Sessions } from './pages/Sessions'
 import { Synonyms } from './pages/Synonyms'
@@ -10,6 +11,9 @@ import { EmptyState } from './sessions/EmptyState'
 import { SessionView } from './sessions/SessionView'
 
 const { Sider, Content, Header } = Layout
+
+// Правая колонка советника — той же высоты, что и левая, но только на главной.
+const ADVISOR_WIDTH = 340
 
 const MENU_ITEMS = [
   { key: '/', icon: <LineChartOutlined />, label: 'Главная' },
@@ -27,9 +31,13 @@ export function App() {
   // отдельности (см. pages/Sessions.tsx), поэтому для него раскладка ограничена высотой
   // окна, а у области содержимого нет полей. Остальные страницы растут вместе с содержимым.
   const inSessions = location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')
+  // Главная также занимает ровно высоту окна: графики делят её между собой, и
+  // прокрутка страницы для их просмотра не нужна (см. pages/Dashboard.tsx).
+  const onDashboard = location.pathname === '/'
+  const fitsWindow = inSessions || onDashboard
 
   return (
-    <Layout style={inSessions ? { height: '100dvh' } : { minHeight: '100vh' }}>
+    <Layout style={fitsWindow ? { height: '100dvh' } : { minHeight: '100vh' }}>
       <Sider
         theme="light"
         width={240}
@@ -71,14 +79,29 @@ export function App() {
         />
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', paddingInline: 24 }}>
-          <Typography.Text type="secondary">Контроль качества дизельного топлива</Typography.Text>
+        <Header className="app-header">
+          {onDashboard ? (
+            <>
+              <Typography.Title level={4} style={{ margin: 0 }}>
+                Содержание серы в гидроочищенном ДТ
+              </Typography.Title>
+              <Typography.Text type="secondary">
+                Поточный анализатор (ПАК) и лабораторный анализ (ЛИМС), мг/кг
+              </Typography.Text>
+            </>
+          ) : (
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              {MENU_ITEMS.find((item) => item.key === (inSessions ? '/sessions' : location.pathname))?.label}
+            </Typography.Title>
+          )}
         </Header>
         <Content
           style={
             inSessions
               ? { display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }
-              : { padding: 24 }
+              : onDashboard
+                ? { display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto', padding: 16 }
+                : { padding: 24 }
           }
         >
           <Routes>
@@ -94,6 +117,11 @@ export function App() {
           </Routes>
         </Content>
       </Layout>
+      {onDashboard && (
+        <Sider theme="light" width={ADVISOR_WIDTH} className="advisor-sider" breakpoint="xl" collapsedWidth={0}>
+          <AdvisorPanel />
+        </Sider>
+      )}
     </Layout>
   )
 }

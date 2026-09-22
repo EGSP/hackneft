@@ -47,6 +47,20 @@
             <button id="reset" class="p-button" type="button">Сбросить курсор</button>
           </div>
 
+          <div class="realtime-toggle">
+            <label class="p-checkbox">
+              <input id="realtime" type="checkbox" class="p-checkbox__input"
+                     aria-labelledby="realtime-label" />
+              <span class="p-checkbox__label" id="realtime-label">
+                Реальное время (1 мин к 1 мин)
+              </span>
+            </label>
+          </div>
+          <p class="p-form-help-text">
+            Платформа включает режим на время работы советника и снимает по его завершении.
+            Пока режим включён, заданные ниже интервал и шаг не действуют.
+          </p>
+
           <!-- Темп и положение курсора задаются разными формами. Поле курсора заполняется
                при загрузке страницы и дальше не обновляется, иначе вводимое значение
                терялось бы; общая кнопка возвращала бы курсор к значению, устаревшему с

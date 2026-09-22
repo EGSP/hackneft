@@ -35,6 +35,11 @@ const LIMS_AREA_COLOR = 'rgba(250, 140, 22, 0.15)'
 const LIMIT_COLOR = '#cf1322'
 const BAND_COLOR = 'rgba(0, 0, 0, 0.035)'
 
+// Поля сетки по горизонтали. Экспортируются для таймлайна событий над графиком: при
+// равных полях его шкала времени совпадает со шкалой графика.
+export const SULFUR_GRID_LEFT = 56
+export const SULFUR_GRID_RIGHT = 24
+
 echarts.registerLocale('RU', langRU)
 
 /**
@@ -77,7 +82,7 @@ export function SulfurChart({
 
     chart.setOption({
       animation: false,
-      grid: { left: 56, right: 24, top: 44, bottom: 64 },
+      grid: { left: SULFUR_GRID_LEFT, right: SULFUR_GRID_RIGHT, top: 40, bottom: 56 },
       legend: { data: [pakName, limsName], top: 8 },
       tooltip: {
         trigger: 'axis',
@@ -104,7 +109,7 @@ export function SulfurChart({
           moveOnMouseWheel: false,
           moveOnMouseMove: true,
         },
-        { type: 'slider', xAxisIndex: 0, filterMode: 'none', height: 24, bottom: 12 },
+        { type: 'slider', xAxisIndex: 0, filterMode: 'none', height: 24, bottom: 8 },
       ],
       series: [
         {
@@ -121,7 +126,7 @@ export function SulfurChart({
             silent: true,
             symbol: 'none',
             lineStyle: { color: LIMIT_COLOR, type: 'dashed', width: 1.6 },
-            label: { formatter: `Норма ${limit} мг/кг`, position: 'insideEndTop' },
+            label: { formatter: `Порог ${limit} мг/кг`, position: 'insideEndTop' },
             data: [{ yAxis: limit }],
           },
           // Полосы фона принадлежат оси времени, но в ECharts область наносится только
@@ -215,5 +220,6 @@ export function SulfurChart({
     }
   }, [loading])
 
-  return <div ref={containerRef} style={{ width: '100%', height: 380 }} />
+  // Высоту задаёт страница: график заполняет отведённый ему контейнер.
+  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 }

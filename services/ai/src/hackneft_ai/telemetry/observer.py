@@ -6,7 +6,8 @@ OpenTelemetry в ядро не проникает. Родительский ко
 """
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any
 
 from opentelemetry.context import Context
 from opentelemetry.trace import Status, StatusCode
@@ -102,7 +103,12 @@ class TracedModelClient:
         self._capture = capture
 
     async def complete(
-        self, messages: Sequence[AgentMessage], tools: Sequence[ToolSpec]
+        self,
+        messages: Sequence[AgentMessage],
+        tools: Sequence[ToolSpec],
+        *,
+        result_schema: Mapping[str, Any] | None = None,
+        reasoning_effort: str | None = None,
     ) -> ModelReply:
         span = tracer().start_span(f"chat {self._identifier}", context=self._parent)
         if span.is_recording():
@@ -123,7 +129,14 @@ class TracedModelClient:
         # Спан закрывается при любом исходе, включая отмену хода: отмена доходит до запроса к
         # модели, и провайдер прекращает генерацию.
         try:
-            reply = await self._provider.complete(self._identifier, messages, tools, self._settings)
+            reply = await self._provider.complete(
+                self._identifier,
+                messages,
+                tools,
+                self._settings,
+                result_schema=result_schema,
+                reasoning_effort=reasoning_effort,
+            )
         except ModelFailure as failure:
             span.set_status(Status(StatusCode.ERROR, failure.message))
             span.end()

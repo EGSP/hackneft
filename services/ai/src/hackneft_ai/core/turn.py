@@ -15,29 +15,31 @@ API модели не имеет памяти: каждое обращение �
 import json
 import time
 import traceback
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
+from typing import Any
 
+from pydantic import JsonValue
 from pydantic_core import to_jsonable_python
 
 from hackneft_common.ai import (
     AssistantMessageEvent,
     AssistantNoteEvent,
-    ModelReplyEvent,
     SessionEvent,
-    StepStartedEvent,
     ToolCallEvent,
     ToolOutcome,
     ToolResultEvent,
     TurnFinishedEvent,
 )
 
+from .budget import model_step
 from .build_messages import build_messages
-from .errors import OutputBudgetExhausted, StepLimitReached
-from .messages import AgentToolCall, AssistantMessage, ToolMessage
+from .errors import StepLimitReached
+from .messages import AgentMessage, AgentToolCall, AssistantMessage, ToolMessage, UserMessage
 from .requirements import ObservedToolCall, TurnDeps
 from .snapshot import request_snapshot, snapshot_prompt, snapshot_specs, sourced_tools
+from .structured import final_answer, final_request
 from .terminal import ASK_USER, CompletionMode, TurnFinish, is_terminal, terminal_text
 from .tool import (
     AnyAgentTool,
@@ -64,6 +66,9 @@ class TurnOptions:
     completion: CompletionMode = "chat"
     """Дисциплина завершения. В чат-сессии доступны оба терминальных инструмента, в
     агентской — только объявление итога: спрашивать некого."""
+    result_schema: Mapping[str, Any] | None = None
+    """JSON Schema итога. Если задана, итоговый ответ запрашивается объектом по ней (см.
+    structured.py); иначе — обычным текстом."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +80,8 @@ class TurnResult:
     steps: int
     tool_calls: int
     duration_ms: int
+    data: JsonValue = None
+    """Итог объектом по схеме итога. Пусто, если схема не задана."""
 
 
 async def run_turn(
@@ -102,9 +109,9 @@ async def run_turn(
     messages = build_messages(snapshot_prompt(snapshot), history)
     tool_calls = 0
 
-    async def finish(text: str, kind: TurnFinish, step: int) -> TurnResult:
+    async def finish(text: str, kind: TurnFinish, step: int, data: JsonValue = None) -> TurnResult:
         await deps.journal.append(AssistantMessageEvent(text=text))
-        result = TurnResult(text, kind, step, tool_calls, _elapsed_ms(started))
+        result = TurnResult(text, kind, step, tool_calls, _elapsed_ms(started), data)
         await deps.journal.append(
             TurnFinishedEvent(
                 steps=result.steps, tool_calls=result.tool_calls, duration_ms=result.duration_ms
@@ -112,41 +119,51 @@ async def run_turn(
         )
         return result
 
+    async def conclude(conversation: list[AgentMessage], step: int) -> TurnResult:
+        final = await final_answer(
+            conversation,
+            options.result_schema,
+            first_step=step + 1,
+            max_steps=options.max_steps,
+            provider=options.provider,
+            model=options.model,
+            snapshot_id=snapshot_id,
+            deps=deps,
+        )
+        return await finish(final.text, "completion", step + final.steps, final.data)
+
     for step in range(1, options.max_steps + 1):
-        # Записывается до обращения к модели: иначе журнал молчит всё время, пока модель
-        # формирует ответ, а это почти вся длительность хода.
-        await deps.journal.append(
-            StepStartedEvent(
-                step=step,
-                max_steps=options.max_steps,
-                provider=options.provider,
-                model=options.model,
-                snapshot_id=snapshot_id,
-            )
+        # Исчерпание бюджета вывода шаг обрабатывает сам повторами (budget.py) и отказом,
+        # если повторы не помогли.
+        answered = await model_step(
+            messages,
+            specs,
+            step=step,
+            max_steps=options.max_steps,
+            provider=options.provider,
+            model=options.model,
+            snapshot_id=snapshot_id,
+            deps=deps,
         )
-
-        reply = await deps.model.complete(messages, specs)
-
-        # Ответ записывается до разбора его содержимого: расход токенов нужен и тогда, когда
-        # ход на этом ответе оборвётся.
-        await deps.journal.append(
-            ModelReplyEvent(
-                step=step,
-                prompt_tokens=reply.usage.prompt,
-                completion_tokens=reply.usage.completion,
-                finish_reason=reply.finish_reason,
-                reasoning=reply.reasoning,
-            )
-        )
+        reply = answered.reply
+        # Рассуждение оборванной попытки остаётся в контексте хода вместе с ответом на него.
+        messages.extend(answered.context)
 
         text = reply.content.strip()
 
         if not reply.tool_calls:
-            # Пустой ответ при `length` — не пустой ответ, а исчерпанный бюджет вывода.
-            if text == "" and reply.finish_reason == "length":
-                raise OutputBudgetExhausted(reply.usage.completion, reply.reasoning is not None)
             # Терминального вызова не было. Ход всё равно завершается: автопродолжение
-            # требует записи подставного сообщения и решается отдельно.
+            # требует записи подставного сообщения и решается отдельно. Итог по схеме
+            # всё же запрашивается: вызывающей стороне нужен объект, а не текст.
+            if options.result_schema is not None:
+                return await conclude(
+                    [
+                        *messages,
+                        AssistantMessage(text),
+                        UserMessage(final_request(options.result_schema)),
+                    ],
+                    step,
+                )
             return await finish(text, "plain", step)
 
         # Вызовы, стоящие в пачке после терминального, отбрасываются: модель уже объявила
@@ -168,7 +185,12 @@ async def run_turn(
         if text != "" and terminal_index is None:
             await deps.journal.append(AssistantNoteEvent(step=step, text=text))
 
-        batch_size = len(executable)
+        # attempt_completion входит в пачку последним вызовом: в журнале он виден как вызов
+        # инструмента, результатом которого служит запрос итогового ответа.
+        completing = (
+            terminal_index is not None and reply.tool_calls[terminal_index].name != ASK_USER
+        )
+        batch_size = len(executable) + (1 if completing else 0)
         for batch_index, call in enumerate(executable, start=1):
             tool_calls += 1
             await deps.journal.append(
@@ -219,10 +241,41 @@ async def run_turn(
 
         if terminal_index is not None:
             call = reply.tool_calls[terminal_index]
-            declared = terminal_text(call.raw_arguments)
-            return await finish(
-                declared if declared != "" else text,
-                "question" if call.name == ASK_USER else "completion",
+            if call.name == ASK_USER:
+                declared = terminal_text(call.raw_arguments)
+                return await finish(declared if declared != "" else text, "question", step)
+            # attempt_completion лишь объявляет конец работы; итог модель даёт ответом на
+            # запрос, который возвращает этот вызов (structured.py).
+            request = final_request(options.result_schema)
+            tool_calls += 1
+            await deps.journal.append(
+                ToolCallEvent(
+                    call_id=call.id,
+                    name=call.name,
+                    raw_arguments=call.raw_arguments,
+                    step=step,
+                    batch_size=batch_size,
+                    batch_index=batch_size,
+                )
+            )
+            await deps.journal.append(
+                ToolResultEvent(
+                    call_id=call.id,
+                    name=call.name,
+                    kind="ok",
+                    content=request,
+                    duration_ms=0,
+                    step=step,
+                    batch_size=batch_size,
+                    batch_index=batch_size,
+                )
+            )
+            return await conclude(
+                [
+                    *messages,
+                    AssistantMessage(text, (call,)),
+                    ToolMessage(call.id, request),
+                ],
                 step,
             )
 

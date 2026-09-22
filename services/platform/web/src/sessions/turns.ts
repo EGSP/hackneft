@@ -19,6 +19,10 @@ export type WorkItem =
       readonly key: string
       readonly text: string
       readonly tokens: number
+      /** Рассуждение оборвано пределом вывода: ответа за ним не последовало. */
+      readonly cutOff: boolean
+      /** Рассуждение получено повтором шага после оборванного. */
+      readonly retry?: 'no_reasoning'
     }
   | {
       readonly kind: 'tool'
@@ -137,6 +141,8 @@ const callKey = (step: number, batchIndex: number, callId: string): string =>
 export function groupTurns(events: readonly SessionEvent[]): TurnBlock[] {
   const turns: TurnBlock[] = []
   let current: TurnBlock | undefined
+  // Повод повтора из начала шага: относится к ответу, который придёт следом.
+  let retry: 'no_reasoning' | undefined
 
   // Вводный блок заводится по первому событию, пришедшему раньше входа. У xip такие события
   // отбрасывались, а здесь их порождает сама платформа: дочернюю сессию можно создать и у
@@ -172,6 +178,7 @@ export function groupTurns(events: readonly SessionEvent[]): TurnBlock[] {
         turn.steps = event.step
         turn.model = `${event.provider}/${event.model}`
         turn.snapshotId ??= event.snapshotId
+        retry = event.retry
         break
       }
 
@@ -188,6 +195,8 @@ export function groupTurns(events: readonly SessionEvent[]): TurnBlock[] {
             key: `r-${event.seq}`,
             text: event.reasoning,
             tokens: event.completionTokens,
+            cutOff: event.finishReason === 'length',
+            retry,
           })
         }
         break

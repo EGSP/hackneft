@@ -6,9 +6,9 @@
 выставляет требования, которые сервис удовлетворяет.
 """
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from hackneft_common.ai import RequestSnapshotContent, SessionEvent
 
@@ -23,8 +23,16 @@ class ModelClient(Protocol):
     """
 
     async def complete(
-        self, messages: Sequence[AgentMessage], tools: Sequence[ToolSpec]
-    ) -> ModelReply: ...
+        self,
+        messages: Sequence[AgentMessage],
+        tools: Sequence[ToolSpec],
+        *,
+        result_schema: Mapping[str, Any] | None = None,
+        reasoning_effort: str | None = None,
+    ) -> ModelReply:
+        """`result_schema` требует ответ объектом JSON по схеме (формат ответа провайдера);
+        `reasoning_effort` — объём рассуждения, `none` выключает его."""
+        ...
 
 
 class ToolRegistry(Protocol):

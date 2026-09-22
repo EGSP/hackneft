@@ -25,6 +25,7 @@ from ..sessions.runner import AgentRunner
 from ..sessions.service import SessionsService
 from ..sessions.snapshots import RequestSnapshotStore
 from ..telemetry.session_traces import SessionTraceRegistry
+from ..tools.agents import AgentTools
 from ..tools.builtin import NotesTools
 from ..tools.factory import ToolsFactory
 
@@ -77,7 +78,8 @@ async def start_services(config: AppConfig) -> Services:
     agents = AgentDirectory(db, instructions)
     mcp_client = McpClient(config.mcp)
     mcp = McpDirectory(db, mcp_client)
-    tools = ToolsFactory(config.mcp, NotesTools(db), mcp, mcp_client)
+    agent_tools = AgentTools(db, agents)
+    tools = ToolsFactory(config.mcp, NotesTools(db), agent_tools, mcp, mcp_client)
     runner = AgentRunner(
         db=db,
         journal=journal,
@@ -90,6 +92,7 @@ async def start_services(config: AppConfig) -> Services:
         tracing=config.tracing,
     )
     sessions = SessionsService(db, bus, journal, models, agents, runner)
+    agent_tools.bind(sessions, runner)
 
     # Сверка выполняется до того, как сервис начинает принимать запросы: проверки по
     # состоянию сессии устаревшего значения не видят.

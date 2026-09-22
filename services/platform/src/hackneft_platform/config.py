@@ -29,3 +29,12 @@ def ai_service_url() -> str:
     работают, а страница сессий сообщает о его недоступности.
     """
     return (os.getenv("AI_SERVICE_URL") or "http://localhost:8100").rstrip("/")
+
+
+def aggregator_url() -> str:
+    """Адрес агрегатора из `AGGREGATOR_URL`, по умолчанию `http://localhost:8200`.
+
+    Работник советника включает у агрегатора темп реального времени на время работы советника
+    и снимает его по завершении. Без агрегатора советник работает, а флаг не ставится.
+    """
+    return (os.getenv("AGGREGATOR_URL") or "http://localhost:8200").rstrip("/")

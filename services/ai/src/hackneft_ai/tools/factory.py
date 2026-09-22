@@ -15,6 +15,7 @@ from ..core.tool import AnyAgentTool, ToolSpec, tool_spec
 from ..mcp.client import McpClient, McpTurnSession
 from ..mcp.directory import McpDirectory
 from ..mcp.tools import McpToolOptions, build_mcp_tools, mcp_prompt_sections
+from .agents import AgentTools
 from .builtin import RANDOM_NUMBER, ROLL_DICE, NotesTools
 
 logger = logging.getLogger(__name__)
@@ -50,10 +51,16 @@ class SessionToolRegistry:
 
 class ToolsFactory:
     def __init__(
-        self, config: McpConfig, notes: NotesTools, directory: McpDirectory, client: McpClient
+        self,
+        config: McpConfig,
+        notes: NotesTools,
+        agents: AgentTools,
+        directory: McpDirectory,
+        client: McpClient,
     ) -> None:
         self._config = config
         self._notes = notes
+        self._agents = agents
         self._directory = directory
         self._client = client
 
@@ -88,7 +95,13 @@ class ToolsFactory:
 
         # Собственные инструменты идут первыми: при совпадении имён побеждает первая
         # регистрация, и уступать имя внешнему серверу сервис не должен.
-        tools = self._deduplicate([*self._builtin(session_id), *external])
+        tools = self._deduplicate(
+            [
+                *self._builtin(session_id),
+                *await self._agents.for_session(session_id),
+                *external,
+            ]
+        )
         if allowed is not None:
             permitted = set(allowed)
             tools = [tool for tool in tools if tool.name in permitted]
@@ -100,7 +113,7 @@ class ToolsFactory:
         """Имена и описания встроенных инструментов."""
         return [
             ToolInfo(name=tool.name, description=tool.description, source="builtin")
-            for tool in self._builtin("preview")
+            for tool in [*self._builtin("preview"), *self._agents.tools("preview")]
         ]
 
     async def describe_all(self) -> list[ToolInfo]:

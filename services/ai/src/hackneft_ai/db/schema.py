@@ -159,6 +159,10 @@ class SessionRow(Base):
     system_prompt: Mapped[str | None]
     """Системный промпт карточки агента, скопированный при создании сессии: правка карточки
     не меняет поведение уже идущих диалогов. Пусто — промпт сервиса по умолчанию."""
+    input: Mapped[Any] = mapped_column(JSON(none_as_null=True), nullable=True)
+    """Исходные данные агентской сессии; их дословно передаёт дочернему агенту `run_agent`."""
+    result_schema: Mapped[Any] = mapped_column(JSON(none_as_null=True), nullable=True)
+    """JSON Schema итога. Пусто — итогом служит текст терминального вызова."""
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now, onupdate=utc_now)
 

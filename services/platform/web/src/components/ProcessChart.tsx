@@ -111,7 +111,7 @@ export function ProcessChart({ title, unit, color, points, view, loading }: Prop
         ref={containerRef}
         role="img"
         aria-label={`${title}, ${unit}. ${lastValue === null ? 'Нет свежего значения' : lastValue.toFixed(1)}`}
-        style={{ width: '100%', height: 180 }}
+        style={{ width: '100%', height: 130 }}
       />
     </Card>
   )

@@ -9,6 +9,11 @@
 поток идёт в реальном темпе установки (шаг выгрузки — 10 минут), при шаге больше интервала
 база наполняется быстрее реального времени.
 
+Режим реального времени временно подменяет интервал и шаг темпом 1 минута к 1 минуте. Его
+включает платформа на время работы советника: пока модель готовит совет, курсор уходит вперёд
+не дальше, чем ушло бы время на установке, и совет не отстаёт от данных. Заданные интервал и
+шаг сохраняются и действуют снова, как только режим снят.
+
 Признак работы не восстанавливается при запуске: агрегатор всегда начинает с паузы, поток
 данных начинается только по команде из веб-интерфейса.
 """
@@ -31,6 +36,9 @@ _LOOP_STEP_S = 0.5
 
 _PRELOAD_CHUNK = timedelta(hours=6)
 """Часть окна первичной закачки. Ограничивает объём одного чтения источников."""
+
+REALTIME_MINUTES = 1.0
+"""Интервал и шаг в режиме реального времени: минута модельного времени за минуту реального."""
 
 _HEALTH_PERIOD_S = 15.0
 """Период проверки доступности платформы. Не зависит от интервала опроса: состояние
@@ -64,6 +72,7 @@ class SimulationRunner:
         self._cursor = saved.cursor if saved is not None else config.start_date
         self._interval_minutes = config.interval_minutes
         self._step_minutes = config.step_minutes
+        self._realtime = False
 
         self._running = False
         self._exhausted = False
@@ -177,6 +186,17 @@ class SimulationRunner:
             if step_minutes is not None:
                 self._step_minutes = step_minutes
 
+    async def set_realtime(self, enabled: bool) -> None:
+        """Включает или снимает темп реального времени; заданные интервал и шаг не меняются."""
+        async with self._lock:
+            if self._realtime == enabled:
+                return
+            self._realtime = enabled
+            if self._running:
+                # Как и при правке интервала, ближайший такт отсчитывается от предыдущего.
+                previous = self._last_tick.at if self._last_tick else _now()
+                self._next_tick_at = previous + self._interval
+
     async def set_cursor(self, cursor: datetime) -> None:
         async with self._lock:
             self._cursor = cursor
@@ -189,12 +209,20 @@ class SimulationRunner:
     # ─── Такты ────────────────────────────────────────────────────────────────
 
     @property
+    def _effective_interval_minutes(self) -> float:
+        return REALTIME_MINUTES if self._realtime else self._interval_minutes
+
+    @property
+    def _effective_step_minutes(self) -> float:
+        return REALTIME_MINUTES if self._realtime else self._step_minutes
+
+    @property
     def _interval(self) -> timedelta:
-        return timedelta(minutes=self._interval_minutes)
+        return timedelta(minutes=self._effective_interval_minutes)
 
     @property
     def _step(self) -> timedelta:
-        return timedelta(minutes=self._step_minutes)
+        return timedelta(minutes=self._effective_step_minutes)
 
     async def _simulate(self) -> None:
         while True:
@@ -286,7 +314,11 @@ class SimulationRunner:
             "startDate": self._config.start_date.isoformat(),
             "intervalMinutes": self._interval_minutes,
             "stepMinutes": self._step_minutes,
-            "speedup": round(self._step_minutes / self._interval_minutes, 3),
+            "realtime": self._realtime,
+            # Действующий темп: в режиме реального времени он отличается от заданного.
+            "effectiveIntervalMinutes": self._effective_interval_minutes,
+            "effectiveStepMinutes": self._effective_step_minutes,
+            "speedup": round(self._effective_step_minutes / self._effective_interval_minutes, 3),
             "nextTickAt": self._next_tick_at.isoformat() if self._next_tick_at else None,
             "ticks": self._ticks,
             "acceptedTotal": self._accepted_total,

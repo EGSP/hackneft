@@ -1,17 +1,5 @@
 import { AimOutlined, ExpandOutlined } from '@ant-design/icons'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Col,
-  Row,
-  Segmented,
-  Space,
-  Statistic,
-  Tooltip,
-  Typography,
-} from 'antd'
+import { Alert, Badge, Button, Card, Segmented, Space, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -22,8 +10,15 @@ import {
   type SensorEvent,
   type SulfurSettings,
 } from '../api'
+import { useAdvisorTimeline } from '../advisor/useAdvisorTimeline'
+import { EventTimeline } from '../components/EventTimeline'
 import { ProcessChart } from '../components/ProcessChart'
-import { SulfurChart, type SulfurPoint } from '../components/SulfurChart'
+import {
+  SULFUR_GRID_LEFT,
+  SULFUR_GRID_RIGHT,
+  SulfurChart,
+  type SulfurPoint,
+} from '../components/SulfurChart'
 import {
   DEFAULT_MODE,
   MODES,
@@ -277,17 +272,12 @@ export function Dashboard() {
 
   const streamStatus = useSensorStream(handleEvent)
 
-  const lastPak = pak.length > 0 ? pak[pak.length - 1][1] : null
-  const lastLims = lims.length > 0 ? lims[lims.length - 1][1] : null
+  const timeline = useAdvisorTimeline(loaded, windowStart)
+
   const limit = settings?.limit ?? 10
   // Пока параметры не получены, ряды пусты, и имена нужны только для подписей.
   const pakName = settings?.pak_name ?? 'ПАК'
   const limsName = settings?.lims_name ?? 'ЛИМС'
-
-  const exceedances = useMemo(
-    () => pak.filter(([, value]) => value > limit).length,
-    [pak, limit],
-  )
 
   const extent = win?.extent ?? null
   const chartBands = useMemo(
@@ -296,68 +286,16 @@ export function Dashboard() {
   )
   const isRestored = win ? win.view[0] === win.extent[0] && win.view[1] === win.extent[1] : true
 
+  // Заголовок страницы выведен в шапку приложения (App.tsx). Страница занимает высоту
+  // области содержимого: график серы забирает свободное место, компактные графики
+  // процесса имеют постоянную высоту.
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Row justify="space-between" align="middle" gutter={[16, 16]}>
-        <Col>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            Содержание серы в гидроочищенном ДТ
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            Поточный анализатор (ПАК) и лабораторный анализ (ЛИМС), мг/кг
-          </Typography.Text>
-        </Col>
-        <Col>
-          <Badge
-            status={streamStatus === 'open' ? 'processing' : 'default'}
-            text={
-              streamStatus === 'open'
-                ? 'Поток событий подключён'
-                : streamStatus === 'connecting'
-                  ? 'Подключение к потоку'
-                  : 'Поток событий недоступен'
-            }
-          />
-        </Col>
-      </Row>
-
+    <div className="dashboard">
       {error && <Alert type="error" showIcon message={error} />}
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={8}>
-          <Card>
-            <Statistic
-              title={`Последнее показание: ${pakName}`}
-              value={lastPak ?? '—'}
-              precision={lastPak === null ? undefined : 2}
-              suffix={lastPak === null ? '' : 'мг/кг'}
-              valueStyle={{ color: lastPak !== null && lastPak > limit ? '#cf1322' : undefined }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card>
-            <Statistic
-              title={`Последний анализ: ${limsName}`}
-              value={lastLims ?? '—'}
-              precision={lastLims === null ? undefined : 2}
-              suffix={lastLims === null ? '' : 'мг/кг'}
-              valueStyle={{ color: lastLims !== null && lastLims > limit ? '#cf1322' : undefined }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card>
-            <Statistic
-              title={`Превышений нормы ${limit} мг/кг (${pakName})`}
-              value={exceedances}
-              suffix={`из ${pak.length}`}
-            />
-          </Card>
-        </Col>
-      </Row>
-
       <Card
+        className="dashboard-main-card"
+        size="small"
         title={
           <Space size="middle" wrap>
             <Segmented<WindowMode>
@@ -377,6 +315,16 @@ export function Dashboard() {
         }
         extra={
           <Space>
+            <Badge
+              status={streamStatus === 'open' ? 'processing' : 'default'}
+              text={
+                streamStatus === 'open'
+                  ? 'Поток подключён'
+                  : streamStatus === 'connecting'
+                    ? 'Подключение к потоку'
+                    : 'Поток недоступен'
+              }
+            />
             <Tooltip title="Перевести окно к последней записи и двигать его вслед за новыми">
               <Button
                 icon={<AimOutlined />}
@@ -396,39 +344,47 @@ export function Dashboard() {
         }
       >
         {win && (
-          <SulfurChart
-            pak={pak}
-            lims={lims}
-            pakName={pakName}
-            limsName={limsName}
-            limit={limit}
-            now={win.anchor}
-            loading={loading}
-            extent={win.extent}
-            view={win.view}
-            bands={chartBands}
-            onViewChange={changeView}
-          />
+          <>
+            <EventTimeline
+              events={timeline.events}
+              runs={timeline.runs}
+              view={win.view}
+              bands={chartBands}
+              left={SULFUR_GRID_LEFT}
+              right={SULFUR_GRID_RIGHT}
+            />
+            <div className="dashboard-sulfur-chart">
+              <SulfurChart
+                pak={pak}
+                lims={lims}
+                pakName={pakName}
+                limsName={limsName}
+                limit={limit}
+                now={win.anchor}
+                loading={loading}
+                extent={win.extent}
+                view={win.view}
+                bands={chartBands}
+                onViewChange={changeView}
+              />
+            </div>
+          </>
         )}
       </Card>
       {win && (
-        <Row gutter={[12, 12]}>
-          <Col xs={24} md={12}>
-            <ProcessChart
-              title="Температура на входе в реактор"
-              unit="°C" color="#722ed1" points={temperature}
-              view={win.view} loading={loading}
-            />
-          </Col>
-          <Col xs={24} md={12}>
-            <ProcessChart
-              title="Подача сырья"
-              unit="т/ч" color="#08979c" points={feed}
-              view={win.view} loading={loading}
-            />
-          </Col>
-        </Row>
+        <div className="dashboard-process">
+          <ProcessChart
+            title="Температура на входе в реактор"
+            unit="°C" color="#722ed1" points={temperature}
+            view={win.view} loading={loading}
+          />
+          <ProcessChart
+            title="Подача сырья"
+            unit="т/ч" color="#08979c" points={feed}
+            view={win.view} loading={loading}
+          />
+        </div>
       )}
-    </Space>
+    </div>
   )
 }
