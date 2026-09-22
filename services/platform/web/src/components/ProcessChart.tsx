@@ -56,7 +56,7 @@ export function ProcessChart({ title, unit, color, points, view, loading }: Prop
     }
     chartRef.current?.setOption({
       animation: false,
-      grid: { left: 44, right: 14, top: 14, bottom: 32, containLabel: true },
+      grid: { left: 44, right: 36, top: 14, bottom: 32, containLabel: true },
       tooltip: {
         trigger: 'axis',
         confine: true,
