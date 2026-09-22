@@ -16,6 +16,9 @@ interface Props {
   pakName: string
   limsName: string
   limit: number
+  // Текущий момент симуляции — время последней полученной записи по любому датчику.
+  // До него продлевается последнее известное значение ЛИМС.
+  now: number
   loading: boolean
   // Окно режима: границы оси времени и полосы прокрутки.
   extent: Range
@@ -28,6 +31,7 @@ interface Props {
 
 const PAK_COLOR = '#1677ff'
 const LIMS_COLOR = '#fa8c16'
+const LIMS_AREA_COLOR = 'rgba(250, 140, 22, 0.15)'
 const LIMIT_COLOR = '#cf1322'
 const BAND_COLOR = 'rgba(0, 0, 0, 0.035)'
 
@@ -49,6 +53,7 @@ export function SulfurChart({
   pakName,
   limsName,
   limit,
+  now,
   loading,
   extent,
   view,
@@ -130,9 +135,23 @@ export function SulfurChart({
           // показываются явно: без них редкий ряд выглядит как ломаная без измерений.
           showSymbol: true,
           symbolSize: 6,
-          lineStyle: { width: 1.6, color: LIMS_COLOR, type: 'dotted' },
+          lineStyle: { width: 1.6, color: LIMS_COLOR },
           itemStyle: { color: LIMS_COLOR },
+          // Заливка отмечает период, за который лабораторные результаты уже получены.
+          areaStyle: { color: LIMS_AREA_COLOR },
           data: [],
+          // Точка ЛИМС стоит в момент отбора пробы, а приходит после готовности
+          // результата, поэтому ряд заканчивается раньше текущего момента. Промежуток
+          // до текущего момента показан пунктиром на уровне последнего значения, без
+          // заливки: новых результатов за этот период ещё нет. Линия закреплена за
+          // рядом ЛИМС, чтобы скрываться вместе с ним при отключении ряда в легенде.
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            lineStyle: { color: LIMS_COLOR, type: 'dashed', width: 1.6 },
+            label: { show: false },
+            data: [],
+          },
         },
       ],
     })
@@ -155,13 +174,18 @@ export function SulfurChart({
   }, [limit, pakName, limsName])
 
   useEffect(() => {
+    const last = lims.length > 0 ? lims[lims.length - 1] : null
+    const pending =
+      last !== null && now > last[0]
+        ? [[{ coord: [last[0], last[1]] }, { coord: [now, last[1]] }]]
+        : []
     chartRef.current?.setOption({
       series: [
         { name: pakName, data: pak },
-        { name: limsName, data: lims },
+        { name: limsName, data: lims, markLine: { data: pending } },
       ],
     })
-  }, [pak, lims, pakName, limsName])
+  }, [pak, lims, now, pakName, limsName])
 
   useEffect(() => {
     chartRef.current?.setOption({
