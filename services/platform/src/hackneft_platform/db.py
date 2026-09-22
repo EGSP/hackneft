@@ -70,6 +70,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _seed_sensor_names()
     _create_sensor_query_view()
+    _create_advisor_indexes()
 
 
 def _seed_sensor_names() -> None:
@@ -124,5 +125,27 @@ def _create_sensor_query_view() -> None:
                 FROM sensor_data d
                 JOIN sensor_names n ON n.sensor_code = d.sensor_code
                 """
+            )
+        )
+
+
+def _create_advisor_indexes() -> None:
+    """Индексы времени журнала советника в базе, созданной до их появления.
+
+    create_all не изменяет существующие таблицы, поэтому индексы, объявленные в
+    advisor/schema.py позже самих таблиц, добавляются здесь. Имена совпадают с теми,
+    что create_all даёт новой базе, и IF NOT EXISTS не создаёт их повторно.
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_advisor_events_occurred_at "
+                "ON advisor_events (occurred_at)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_advisor_runs_requested_at "
+                "ON advisor_runs (requested_at)"
             )
         )

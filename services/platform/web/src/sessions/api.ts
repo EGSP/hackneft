@@ -67,6 +67,11 @@ export interface StepStartedEvent extends EventBase {
   provider: string
   model: string
   snapshotId?: string
+  /**
+   * Повтор шага после того, как рассуждение исчерпало бюджет вывода: ответ с выключенным
+   * рассуждением по рассуждению оборванной попытки. Отсутствует у первой попытки.
+   */
+  retry?: 'no_reasoning'
 }
 
 /** Ответ модели на обращение шага: расход токенов и рассуждение. */

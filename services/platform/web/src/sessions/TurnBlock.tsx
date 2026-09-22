@@ -240,15 +240,22 @@ function ToolDetails({ item }: { readonly item: ToolWork }) {
   )
 }
 
+// Повтор шага после оборванного рассуждения (core/budget.py ИИ-сервиса).
+const RETRY_LABEL: Record<'no_reasoning', string> = {
+  no_reasoning: 'ответ без рассуждения',
+}
+
 /** Размышление модели: та же строка, что у вызова. Читается редко и бывает длинным. */
 function ReasoningLine({ item }: { readonly item: ReasoningWork }) {
   const { token } = theme.useToken()
 
   return (
     <RowLine
-      icon={<BulbOutlined style={{ color: token.colorTextTertiary }} />}
-      name="Размышление"
-      meta={`${item.tokens} ток.`}
+      icon={
+        <BulbOutlined style={{ color: item.cutOff ? token.colorWarning : token.colorTextTertiary }} />
+      }
+      name={item.cutOff ? 'Размышление прервано лимитом токенов' : 'Размышление'}
+      meta={`${item.retry ? `${RETRY_LABEL[item.retry]} · ` : ''}${item.tokens} ток.`}
     />
   )
 }

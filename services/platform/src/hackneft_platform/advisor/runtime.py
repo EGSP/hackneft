@@ -1,7 +1,6 @@
 """Один работник: сначала все проверки, затем максимум одна сессия советника."""
 
 import asyncio
-import json
 import logging
 import os
 from typing import Any
@@ -11,6 +10,7 @@ import httpx
 from hackneft_platform.config import ai_service_url
 from hackneft_platform.db import SessionLocal
 
+from .advice import ADVICE_SCHEMA
 from .rules import Policy
 from .service import AdvisorService
 
@@ -25,20 +25,45 @@ def configured_service() -> AdvisorService:
     return AdvisorService(SessionLocal, policy)
 
 
+# Инструменты, которые платформа открывает советнику: запуск агентов защиты и производства.
+ADVISOR_TOOLS = ["list_agents", "run_agent"]
+
+
 def task_for(run: dict[str, Any]) -> str:
+    """Постановка задачи советнику. Данные запуска передаются отдельно полем input."""
+    reasons = "; ".join(str(reason.get("reason", "")) for reason in run["reasons"])
     return (
-        "Ты советник оператора установки гидроочистки 24-2000. Рассмотри все причины "
-        "вместе. Собери одну сводку по результатам дочерних агентов согласно карточке. "
-        "Если вызов агентов недоступен, явно сообщи об этом и не имитируй результаты. "
-        "Структура ответа: что изменилось; возможное влияние на качество; что проверить "
-        "или сделать; когда оценить эффект. Не выдавай исторические диапазоны за "
-        "технологические пределы. Не придумывай допустимые уставки. Новое значение "
-        "измерения не доказывает действие оператора. ЛИМС относится ко времени отбора "
-        "пробы, а не к текущему времени; ПАК и Q21 не взаимозаменяемы. Не заявляй "
-        "причинный эффект как доказанный. Норма серы продукта — не более 10 мг/кг. "
-        "При недостатке сведений назови их. Управление оборудованием не выполняй.\n"
-        + json.dumps({"reasons": run["reasons"], "snapshot": run["snapshot"]}, ensure_ascii=False)
+        "Ты советник оператора установки гидроочистки 24-2000. Причины запуска: "
+        f"{reasons}. Запусти агента защиты, затем агента производства, передав им исходные "
+        "данные, и выдай один короткий совет: что сделать или ничего не делать. ЛИМС "
+        "относится ко времени отбора пробы; ПАК и Q21 не взаимозаменяемы. Норма серы "
+        "продукта — не более 10 мг/кг. Не придумывай уставки и не заявляй причинный эффект "
+        "доказанным. Управление оборудованием не выполняй."
     )
+
+
+def input_for(run: dict[str, Any]) -> dict[str, Any]:
+    """Исходные данные запуска: их дословно получают агенты, запущенные советником.
+
+    Показания записаны компактно — время и значение без служебных полей: история за два
+    часа по восьми датчикам иначе занимает десятки тысяч символов контекста агента.
+    """
+    snapshot = run["snapshot"]
+    return {
+        "reasons": run["reasons"],
+        "at": snapshot.get("at"),
+        "unit": snapshot.get("unit"),
+        "sulfur_level": snapshot.get("sulfur_level"),
+        "latest": {
+            code: {"at": reading["at"], "value": reading["value"]}
+            for code, reading in snapshot.get("readings", {}).items()
+        },
+        "history": {
+            code: [[reading["at"], reading["value"]] for reading in readings]
+            for code, readings in snapshot.get("recent_history", {}).items()
+        },
+        "policy": snapshot.get("policy"),
+    }
 
 
 class AdvisorWorker:
@@ -70,7 +95,9 @@ class AdvisorWorker:
             "kind": "agent",
             "title": f"24-2000 / {run['id']}",
             "task": task_for(run),
-            "tools": [],
+            "input": input_for(run),
+            "resultSchema": ADVICE_SCHEMA,
+            "tools": ADVISOR_TOOLS,
             "agent": os.getenv("ADVISOR_AGENT_ID") or "advisor",
         }
         try:

@@ -126,3 +126,117 @@ export function deleteSensorName(sensorCode: string, name: string): Promise<void
   const params = new URLSearchParams({ sensor_code: sensorCode, name })
   return request<void>(`/api/sensor-names?${params.toString()}`, { method: 'DELETE' })
 }
+
+// Журнал советника (advisor/service.py). Время событий и запусков — местное время
+// данных без смещения, как и у показаний, поэтому new Date читает его так же.
+export type AdvisorSeverity = 'info' | 'warning' | 'critical'
+
+export interface AdvisorReason {
+  kind: string
+  severity: AdvisorSeverity
+  reason: string
+  consequence: string
+  evidence: Record<string, number | string | string[]>
+}
+
+export interface AdvisorEvent extends AdvisorReason {
+  id: number
+  occurred_at: string
+}
+
+export interface AdvisorRun {
+  id: string
+  status: string
+  requested_at: string
+  started_at: string | null
+  finished_at: string | null
+  reasons: AdvisorReason[]
+  session_id: string | null
+  result: unknown
+  error: string | null
+}
+
+// Состояние допуска: всё, от чего зависит, будет ли запущен советник.
+export interface AdvisorStatus {
+  unit: string
+  clock: 'replay' | 'live'
+  observed_at: string | null
+  interval_minutes: number
+  next_allowed_at: string | null
+  last_started_at: string | null
+  blocked_by_data: string[]
+  window_open: boolean
+  inputs_pending: boolean
+  sulfur_level: 'normal' | 'warning' | 'exceeded'
+  active_reasons: AdvisorReason[]
+  pending_reasons: AdvisorReason[]
+  active_run_id: string | null
+  last_run: AdvisorRun | null
+  result_needs_review: boolean
+}
+
+export function fetchAdvisorStatus(): Promise<AdvisorStatus> {
+  return request<AdvisorStatus>('/api/advisor/status')
+}
+
+// События начиная с момента start либо новее записи afterId, по возрастанию.
+export async function fetchAdvisorEvents(
+  params: { start?: Date; afterId?: number },
+): Promise<AdvisorEvent[]> {
+  const query = new URLSearchParams({ order: 'asc', limit: '5000' })
+  if (params.start) {
+    query.set('start', formatBoundary(params.start))
+  }
+  if (params.afterId !== undefined) {
+    query.set('after_id', String(params.afterId))
+  }
+  const payload = await request<{ items: AdvisorEvent[] }>(`/api/advisor/events?${query}`)
+  return payload.items
+}
+
+export async function fetchAdvisorRuns(start: Date): Promise<AdvisorRun[]> {
+  const query = new URLSearchParams({ start: formatBoundary(start), limit: '1000' })
+  const payload = await request<{ items: AdvisorRun[] }>(`/api/advisor/runs?${query}`)
+  return payload.items
+}
+
+// Карточка совета — объект по схеме advisor/advice.py (AdviceCard).
+export type AdviceRisk = 'none' | 'watch' | 'warning' | 'critical'
+
+export interface AdviceAction {
+  type: 'adjust' | 'check'
+  text: string
+  parameter: string | null
+  direction: 'increase' | 'decrease' | 'keep' | null
+  target: { value: number; unit: string } | null
+}
+
+export interface AdviceCardData {
+  decision: 'act' | 'hold'
+  headline: string
+  risk: AdviceRisk
+  actions: AdviceAction[]
+  because: string
+  protection: string
+  production: string
+  expected_effect: string
+  recheck_after_minutes: number | null
+  confidence: 'high' | 'medium' | 'low'
+}
+
+export interface Advice {
+  id: number
+  run_id: string
+  session_id: string | null
+  // Время данных, к которому относится совет.
+  created_at: string
+  recorded_at: string
+  reasons: AdvisorReason[]
+  card: AdviceCardData
+}
+
+// Советы, новые первыми: актуален первый.
+export async function fetchAdvices(limit = 30): Promise<Advice[]> {
+  const payload = await request<{ items: Advice[] }>(`/api/advisor/advices?limit=${limit}`)
+  return payload.items
+}

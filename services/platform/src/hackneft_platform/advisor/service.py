@@ -5,14 +5,16 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from hackneft_platform.catalog import SULFUR_LIMS_CODE
 from hackneft_platform.events import SensorDataCreated
 
+from .advice import AdviceCard
 from .rules import TRACKED, Monitor, Policy, Reading, Reason, evaluate
-from .schema import AdvisorEvent, AdvisorInput, AdvisorRun, AdvisorState
+from .schema import AdvisorAdvice, AdvisorEvent, AdvisorInput, AdvisorRun, AdvisorState
 
 
 def local_time(value: datetime) -> datetime:
@@ -246,6 +248,8 @@ class AdvisorService:
                 run.session_id = session_id
             run.error = error
             run.result = result
+            if status == "completed" and isinstance(result, dict):
+                self._record_advice(db, run, result)
             if status in ("completed", "failed", "cancelled"):
                 run.finished_at = datetime.now()
                 row = self._state(db)
@@ -262,6 +266,55 @@ class AdvisorService:
                         state.pending.setdefault(reason.kind, reason)
                     row.payload = state.model_dump(mode="json")
             db.commit()
+
+    @staticmethod
+    def _record_advice(db: Session, run: AdvisorRun, result: dict[str, Any]) -> None:
+        """Совет из итога советника. Повторное завершение того же запуска совета не дублирует."""
+        if db.scalar(select(AdvisorAdvice.id).where(AdvisorAdvice.run_id == run.id)) is not None:
+            return
+        try:
+            card = AdviceCard.model_validate(result)
+        except ValidationError as error:
+            # ИИ-сервис уже проверил итог по той же схеме; расхождение означает рассогласование
+            # версий схемы, и запуск остаётся без совета с объяснением.
+            run.error = f"Итог советника не соответствует карточке совета: {error}"[:2000]
+            return
+        db.add(
+            AdvisorAdvice(
+                run_id=run.id,
+                session_id=run.session_id,
+                created_at=run.requested_at,
+                recorded_at=datetime.now(),
+                decision=card.decision,
+                risk=card.risk,
+                headline=card.headline,
+                reasons=run.reasons,
+                card=card.model_dump(mode="json"),
+            )
+        )
+
+    def advices(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Советы, новые первыми. Актуален первый: новый совет заменяет прежние."""
+        with self.sessions() as db:
+            rows = db.scalars(select(AdvisorAdvice).order_by(AdvisorAdvice.id.desc()).limit(limit))
+            return [self._advice_dict(row) for row in rows]
+
+    def advice(self, advice_id: int) -> dict[str, Any] | None:
+        with self.sessions() as db:
+            row = db.get(AdvisorAdvice, advice_id)
+            return self._advice_dict(row) if row else None
+
+    @staticmethod
+    def _advice_dict(row: AdvisorAdvice) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "run_id": row.run_id,
+            "session_id": row.session_id,
+            "created_at": row.created_at,
+            "recorded_at": row.recorded_at,
+            "reasons": row.reasons,
+            "card": row.card,
+        }
 
     def active_run(self) -> dict[str, Any] | None:
         with self.sessions() as db:
@@ -291,6 +344,9 @@ class AdvisorService:
             last_run = db.scalar(
                 select(AdvisorRun).order_by(AdvisorRun.requested_at.desc()).limit(1)
             )
+            unprocessed = db.scalar(
+                select(AdvisorInput.id).where(AdvisorInput.processed.is_(False)).limit(1)
+            )
             return {
                 "unit": "24-2000",
                 "clock": self.policy.clock,
@@ -305,14 +361,58 @@ class AdvisorService:
                 "window_open": state.window_open,
                 "active_reasons": [r.model_dump() for r in state.active.values()],
                 "pending_reasons": [r.model_dump() for r in state.pending.values()],
+                "last_started_at": row.last_started_at if row else None,
+                "inputs_pending": unprocessed is not None,
+                "sulfur_level": state.sulfur_level,
                 "active_run_id": row.active_run_id if row else None,
                 "last_run": self._run_dict(last_run) if last_run else None,
                 "result_needs_review": bool(state.bad_codes or state.pending),
             }
 
-    def events(self, limit: int = 50) -> list[dict[str, Any]]:
+    def events(
+        self,
+        limit: int = 50,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        kinds: Iterable[str] = (),
+        severities: Iterable[str] = (),
+        search: str | None = None,
+        after_id: int | None = None,
+        ascending: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Поиск по журналу событий; без условий — последние события.
+
+        Период ограничивает время события (occurred_at — время данных, а не записи),
+        after_id отдаёт только записи новее уже полученных. Текст ищется в причине,
+        следствии и доказательствах без учёта регистра.
+        """
+        query = select(AdvisorEvent)
+        if start is not None:
+            query = query.where(AdvisorEvent.occurred_at >= local_time(start))
+        if end is not None:
+            query = query.where(AdvisorEvent.occurred_at <= local_time(end))
+        if kinds := list(kinds):
+            query = query.where(AdvisorEvent.kind.in_(kinds))
+        if severities := list(severities):
+            query = query.where(AdvisorEvent.severity.in_(severities))
+        if after_id is not None:
+            query = query.where(AdvisorEvent.id > after_id)
+        order = AdvisorEvent.id.asc() if ascending else AdvisorEvent.id.desc()
+        needle = search.strip().casefold() if search else ""
         with self.sessions() as db:
-            rows = db.scalars(select(AdvisorEvent).order_by(AdvisorEvent.id.desc()).limit(limit))
+            if not needle:
+                rows = db.scalars(query.order_by(order).limit(limit)).all()
+            else:
+                # lower() в SQLite не приводит кириллицу, поэтому текст сравнивается
+                # здесь, после отбора по остальным условиям.
+                rows = []
+                for row in db.scalars(query.order_by(order)):
+                    haystack = f"{row.reason} {row.consequence} {row.evidence}".casefold()
+                    if needle in haystack:
+                        rows.append(row)
+                        if len(rows) >= limit:
+                            break
             return [
                 {
                     "id": r.id,
@@ -325,3 +425,20 @@ class AdvisorService:
                 }
                 for r in rows
             ]
+
+    def runs(
+        self,
+        limit: int = 200,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Запуски советника по времени допуска, новые первыми; без снимка данных."""
+        query = select(AdvisorRun)
+        if start is not None:
+            query = query.where(AdvisorRun.requested_at >= local_time(start))
+        if end is not None:
+            query = query.where(AdvisorRun.requested_at <= local_time(end))
+        with self.sessions() as db:
+            rows = db.scalars(query.order_by(AdvisorRun.requested_at.desc()).limit(limit))
+            return [{k: v for k, v in self._run_dict(r).items() if k != "snapshot"} for r in rows]

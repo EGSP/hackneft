@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -325,12 +325,68 @@ def advisor_status(request: Request) -> dict[str, Any]:
     return dict(request.app.state.advisor.status())
 
 
+# Повторяющиеся параметры поиска по журналу: ?kind=sulfur_risk&kind=lab_result.
+# Объявлены здесь по той же причине, что и names_query.
+event_kinds_query = Query(default=[])
+event_severities_query = Query(default=[])
+
+
 @app.get("/api/advisor/events")
 def advisor_events(
-    request: Request, limit: int = Query(default=50, ge=1, le=200)
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=5000),
+    start: datetime | None = None,
+    end: datetime | None = None,
+    kind: list[str] = event_kinds_query,
+    severity: list[str] = event_severities_query,
+    q: str | None = None,
+    after_id: int | None = None,
+    order: Literal["asc", "desc"] = "desc",
 ) -> dict[str, Any]:
-    """Журнал простых причин с объяснением ожидаемого влияния."""
-    return {"items": request.app.state.advisor.events(limit)}
+    """Журнал простых причин с объяснением ожидаемого влияния и поиском по нему.
+
+    start и end ограничивают время события в местном времени данных, как у
+    /api/sensor-data/view; q ищет текст в причине, следствии и доказательствах.
+    """
+    return {
+        "items": request.app.state.advisor.events(
+            limit,
+            start=start,
+            end=end,
+            kinds=kind,
+            severities=severity,
+            search=q,
+            after_id=after_id,
+            ascending=order == "asc",
+        )
+    }
+
+
+@app.get("/api/advisor/runs")
+def advisor_runs(
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=1000),
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> dict[str, Any]:
+    """Запуски советника за период, новые первыми; снимок данных не передаётся."""
+    return {"items": request.app.state.advisor.runs(limit, start=start, end=end)}
+
+
+@app.get("/api/advisor/advices")
+def advisor_advices(
+    request: Request, limit: int = Query(default=20, ge=1, le=200)
+) -> dict[str, Any]:
+    """Советы советника, новые первыми. Актуален первый в перечне."""
+    return {"items": request.app.state.advisor.advices(limit)}
+
+
+@app.get("/api/advisor/advices/{advice_id}")
+def advisor_advice(request: Request, advice_id: int) -> dict[str, Any]:
+    advice = request.app.state.advisor.advice(advice_id)
+    if advice is None:
+        raise HTTPException(status_code=404, detail="Совет не найден")
+    return dict(advice)
 
 
 # GET-эндпоинт получения последней (самой свежей) записи показания датчика.

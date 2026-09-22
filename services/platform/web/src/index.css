@@ -37,3 +37,404 @@ body {
 .sessions-page .ant-collapse-header-text {
   min-width: 0;
 }
+
+/* Шапка приложения: заголовок страницы и пояснение к нему в одну строку. */
+.app-header.ant-layout-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  padding-inline: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app-header .ant-typography {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Главная страница занимает высоту области содержимого без прокрутки. Карточка графика
+   серы забирает свободное место; минимальные высоты не дают графикам сжаться до
+   нечитаемого размера — на низком экране вместо этого появляется прокрутка. */
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dashboard-main-card {
+  flex: 1 1 auto;
+  min-height: 340px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-main-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0 0;
+}
+
+.dashboard-sulfur-chart {
+  flex: 1 1 auto;
+  min-height: 240px;
+}
+
+.dashboard-process {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+/* Таймлайн событий над графиком серы. Поля слева и справа задаются из компонента
+   равными полям сетки графика. */
+.event-timeline {
+  position: relative;
+  flex: 0 0 auto;
+  height: 34px;
+}
+
+.event-timeline-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.event-timeline-track {
+  position: relative;
+  height: 100%;
+  border-top: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.event-timeline-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.event-timeline-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed #d9d9d9;
+}
+
+.event-timeline-marker {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 12px;
+  background: #fff;
+  border: 1.5px solid;
+  border-radius: 50%;
+}
+
+.event-timeline-marker:hover {
+  z-index: 1;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
+}
+
+.event-timeline-count {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.timeline-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.timeline-tip-item {
+  display: flex;
+  gap: 8px;
+}
+
+.timeline-tip-hint {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* Правая колонка советника: высота окна, как у левой панели навигации. Шапка с
+   показателями допуска постоянна, прокручивается только область карточек. */
+.advisor-sider.ant-layout-sider {
+  border-left: 1px solid #f0f0f0;
+}
+
+.advisor-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+.advisor-panel-header {
+  flex: 0 0 auto;
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+
+.advisor-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.advisor-placeholder {
+  height: 100%;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #bfbfbf;
+  border: 1px dashed #d9d9d9;
+  border-radius: 8px;
+  text-align: center;
+  padding: 16px;
+}
+
+.advisor-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.advisor-gate-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.advisor-gate-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.advisor-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.advisor-check > .anticon {
+  margin-top: 4px;
+}
+
+.advisor-check-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.advisor-check-text {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.advisor-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+/* Карточки советов. Актуальная — развёрнута; прежние свёрнуты в строку и приглушены. */
+.advice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.advice-card {
+  border: 1px solid #f0f0f0;
+  border-left: 4px solid;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: opacity 0.6s ease, box-shadow 0.2s ease;
+}
+
+.advice-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.advice-card--current {
+  padding: 10px 12px;
+  animation: advice-appear 0.5s ease;
+}
+
+.advice-card--stale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  opacity: 0.5;
+  font-size: 12px;
+  animation: advice-fade 0.6s ease;
+}
+
+.advice-card--stale:hover {
+  opacity: 0.85;
+}
+
+@keyframes advice-appear {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes advice-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.5;
+  }
+}
+
+.advice-card-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.advice-card-time {
+  flex-shrink: 0;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.advice-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.advice-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.advice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.advice-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+
+.advice-actions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.advice-action {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.advice-action-icon {
+  color: #1677ff;
+}
+
+.advice-code {
+  margin-left: 6px;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.advice-hold {
+  color: #389e0d;
+}
+
+.advice-because {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.advice-agents {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.advice-agents dt {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.advice-agents dd {
+  margin: 0;
+}
+
+.advice-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.advice-preview .ant-popover-inner {
+  width: 340px;
+}
+
+.advice-preview-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
