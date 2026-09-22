@@ -11,6 +11,55 @@ from hackneft_platform.catalog import SULFUR_LIMS_CODE, SULFUR_PAK_CODE
 REQUIRED = (SULFUR_PAK_CODE, "ht_t6", "ht_f9", "ht_f25", "ht_f2", "ht_p13")
 TRACKED = (*REQUIRED, SULFUR_LIMS_CODE, "ht_q20")
 
+SULFUR_THRESHOLD = 10.0
+"""Порог серы в продукте, мг/кг: выше него топливо не соответствует требованию."""
+
+# Названия и единицы параметров для текстов причин. Единицы расхода газа в материалах
+# проекта не подтверждены, поэтому для них единица не указывается.
+NAMES = {
+    SULFUR_PAK_CODE: "сера по ПАК",
+    SULFUR_LIMS_CODE: "сера по ЛИМС",
+    "ht_q20": "сера в сырье (Q20)",
+    "ht_f9": "подача сырья (F9)",
+    "ht_t6": "температура на входе в реактор (T6)",
+    "ht_p13": "давление на входе в реактор (P13)",
+    "ht_f25": "свежий ВСГ (F25)",
+    "ht_f2": "циркуляционный газ (F2)",
+}
+UNITS = {
+    SULFUR_PAK_CODE: "мг/кг",
+    SULFUR_LIMS_CODE: "мг/кг",
+    "ht_q20": "мг/кг",
+    "ht_f9": "т/ч",
+    "ht_t6": "°C",
+    "ht_p13": "МПа",
+}
+
+
+def number(value: float) -> str:
+    """Число для текста причины: запятая как десятичный знак, точность по величине."""
+    size = abs(value)
+    digits = 0 if size >= 1000 else 1 if size >= 100 else 2 if size >= 1 else 3
+    return f"{value:.{digits}f}".replace(".", ",")
+
+
+def quantity(code: str, value: float) -> str:
+    unit = UNITS.get(code)
+    return f"{number(value)} {unit}" if unit else number(value)
+
+
+def signed(value: float) -> str:
+    return ("+" if value > 0 else "−" if value < 0 else "±") + number(abs(value))
+
+
+def title(name: str) -> str:
+    """Название с прописной буквы; в отличие от str.capitalize, код в скобках не меняется."""
+    return name[:1].upper() + name[1:]
+
+
+def percent(before: float, after: float) -> str:
+    return f" ({signed((after - before) / before * 100)} %)" if before else ""
+
 
 class Policy(BaseModel):
     interval_minutes: int = Field(default=30, ge=15, le=60)
@@ -77,6 +126,15 @@ def sustained(history: list[Reading], at: datetime, minutes: int, threshold: flo
     )
 
 
+def change_over(history: list[Reading], at: datetime, minutes: int) -> float | None:
+    """Изменение значения за последние `minutes` минут; пусто, если точек меньше двух."""
+    start = at - timedelta(minutes=minutes)
+    points = [r for r in history if r.valid() and start <= r.at <= at]
+    if len(points) < 2 or points[-1].at != at:
+        return None
+    return points[-1].value - points[0].value
+
+
 def evaluate(state: Monitor, policy: Policy, *, new_lab: bool = False) -> list[Reason]:
     """Обновляет состояние шести правил и возвращает только произошедшие изменения."""
     if state.at is None:
@@ -96,11 +154,17 @@ def evaluate(state: Monitor, policy: Policy, *, new_lab: bool = False) -> list[R
         reason = Reason(
             kind="data_quality",
             severity="warning" if bad else "info",
-            reason="Недостаточно достоверных данных" if bad else "Данные восстановлены",
-            consequence=(
-                "Автоматический совет приостановлен: нельзя проверить режим."
+            reason=(
+                "Нет свежих достоверных показаний: "
+                + ", ".join(NAMES.get(code, code) for code in bad)
                 if bad
-                else "Можно снова оценивать режим."
+                else "Данные восстановлены: все обязательные показания свежие"
+            ),
+            consequence=(
+                "Автоматический совет приостановлен: по показаниям старше "
+                f"{policy.stale_minutes} мин, пропускам и значению 307 режим не оценить."
+                if bad
+                else "Режим снова оценивается по свежему снимку."
             ),
             evidence={"codes": bad},
         )
@@ -133,22 +197,48 @@ def evaluate(state: Monitor, policy: Policy, *, new_lab: bool = False) -> list[R
             and pak.value - prior_value >= policy.sulfur_increase
         )
         if level != state.sulfur_level or worsening:
+            value = number(pak.value)
+            margin = SULFUR_THRESHOLD - pak.value
+            minutes = policy.warning_minutes
+            trend = change_over(state.history.get(SULFUR_PAK_CODE, []), pak.at, minutes)
+            trend_text = f", за {minutes} мин {signed(trend)} мг/кг" if trend is not None else ""
+            evidence: dict[str, float | str | list[str]] = {
+                "value": pak.value,
+                "sensor_code": pak.code,
+                "level": level,
+                "threshold": SULFUR_THRESHOLD,
+                "margin": round(margin, 3),
+            }
+            if trend is not None:
+                evidence["change"] = round(trend, 3)
+                evidence["change_minutes"] = minutes
+            if level == "normal":
+                text = f"Сера по ПАК снизилась до {value} мг/кг{trend_text}"
+                consequence = (
+                    f"Запас до порога {number(margin)} мг/кг: проверить, нужны ли прежние действия."
+                )
+            elif level == "warning":
+                text = (
+                    f"Сера по ПАК {value} мг/кг: не ниже {number(policy.warning)} мг/кг "
+                    f"{minutes} мин подряд{trend_text}"
+                )
+                consequence = (
+                    f"Запас до порога {number(SULFUR_THRESHOLD)} мг/кг — {number(margin)} мг/кг."
+                )
+            else:
+                text = (
+                    f"Сера по ПАК {value} мг/кг выше порога "
+                    f"{number(SULFUR_THRESHOLD)} мг/кг{trend_text}"
+                )
+                consequence = f"Порог превышен на {number(-margin)} мг/кг."
             reason = Reason(
                 kind="sulfur_risk",
                 severity="critical"
                 if level == "exceeded"
                 else ("warning" if level == "warning" else "info"),
-                reason={
-                    "normal": "Содержание серы снизилось",
-                    "warning": "Сера устойчиво близка к норме",
-                    "exceeded": "ПАК показал превышение 10 мг/кг",
-                }[level],
-                consequence=(
-                    "Проверить необходимость прежних действий."
-                    if level == "normal"
-                    else "Есть риск выпуска топлива вне нормы."
-                ),
-                evidence={"value": pak.value, "sensor_code": pak.code, "level": level},
+                reason=text,
+                consequence=consequence,
+                evidence=evidence,
             )
             if level == "normal":
                 state.pending.pop("sulfur_risk", None)
@@ -168,8 +258,15 @@ def evaluate(state: Monitor, policy: Policy, *, new_lab: bool = False) -> list[R
                 Reason(
                     kind="lab_result",
                     severity="critical" if lab.value > 10 else "info",
-                    reason="Получен новый лабораторный анализ серы",
-                    consequence="Уточнить качество с учётом времени отбора лабораторной пробы.",
+                    reason=(
+                        f"ЛИМС: сера {number(lab.value)} мг/кг в пробе от {lab.at:%d.%m %H:%M}"
+                        + (
+                            f", выше порога {number(SULFUR_THRESHOLD)} мг/кг"
+                            if lab.value > SULFUR_THRESHOLD
+                            else ""
+                        )
+                    ),
+                    consequence=f"Сравнить с ПАК на {lab.at:%H:%M}, а не с последней точкой ПАК.",
                     evidence={"value": lab.value, "sampled_at": lab.at.isoformat()},
                 )
             )
@@ -223,12 +320,10 @@ def evaluate(state: Monitor, policy: Policy, *, new_lab: bool = False) -> list[R
                 Reason(
                     kind=kind,
                     severity="warning",
-                    reason={
-                        "ht_q20": "Изменилась сера в сырье",
-                        "ht_f9": "Изменилась подача сырья",
-                        "ht_t6": "Изменилась температура на входе в реактор",
-                        "ht_p13": "Изменилось давление на входе в реактор",
-                    }[code],
+                    reason=(
+                        f"{title(NAMES[code])}: {quantity(code, baseline)} → "
+                        f"{quantity(code, reading.value)}{percent(baseline, reading.value)}"
+                    ),
                     consequence=consequence
                     if code != "ht_q20" or reading.value > baseline
                     else "Сера в сырье снизилась; уточнить необходимую интенсивность очистки.",
@@ -257,8 +352,14 @@ def evaluate(state: Monitor, policy: Policy, *, new_lab: bool = False) -> list[R
                         Reason(
                             kind="gas_supply",
                             severity="warning",
-                            reason="Снизилась подача газа на тонну сырья",
-                            consequence="Очистка может ухудшиться; проверить качество и режим.",
+                            reason=(
+                                f"{title(NAMES[code])} на тонну сырья: "
+                                f"{number(baseline)} → {number(ratio)}{percent(baseline, ratio)}"
+                            ),
+                            consequence=(
+                                f"Очистка может ухудшиться: {NAMES[code]} {number(gas.value)} "
+                                f"при подаче сырья {quantity('ht_f9', feed.value)}."
+                            ),
                             evidence={"ratio": key, "before": baseline, "after": ratio},
                         )
                     )

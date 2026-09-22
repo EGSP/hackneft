@@ -43,6 +43,8 @@ services:
     environment:
       # Внутри сети compose сервисы обращаются друг к другу по имени.
       AI_SERVICE_URL: http://ai:8100
+      # На время работы советника платформа включает у агрегатора темп реального времени.
+      AGGREGATOR_URL: http://aggregator:8200
     ports:
       - "8000:8000"
     volumes:

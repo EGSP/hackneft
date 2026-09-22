@@ -71,7 +71,10 @@ class AdvisorAdvice(Base):
     # Время данных, к которому относится совет, — момент допуска запуска.
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime)
+    # Тип совета (advice.AdviceType). Столбец сохранил прежнее имя: create_all существующие
+    # таблицы не меняет.
     decision: Mapped[str] = mapped_column(String)
+    # Прежняя градация риска; больше не используется и заполняется типом совета.
     risk: Mapped[str] = mapped_column(String)
     headline: Mapped[str]
     # Причины запуска: какие события привели к совету.

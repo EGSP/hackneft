@@ -3,15 +3,16 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
 
-from hackneft_platform.config import ai_service_url
+from hackneft_platform.config import aggregator_url, ai_service_url
 from hackneft_platform.db import SessionLocal
 
 from .advice import ADVICE_SCHEMA
-from .rules import Policy
+from .rules import NAMES, SULFUR_THRESHOLD, UNITS, Policy
 from .service import AdvisorService
 
 logger = logging.getLogger(__name__)
@@ -30,16 +31,17 @@ ADVISOR_TOOLS = ["list_agents", "run_agent"]
 
 
 def task_for(run: dict[str, Any]) -> str:
-    """Постановка задачи советнику. Данные запуска передаются отдельно полем input."""
-    reasons = "; ".join(str(reason.get("reason", "")) for reason in run["reasons"])
-    return (
-        "Ты советник оператора установки гидроочистки 24-2000. Причины запуска: "
-        f"{reasons}. Запусти агента защиты, затем агента производства, передав им исходные "
-        "данные, и выдай один короткий совет: что сделать или ничего не делать. ЛИМС "
-        "относится ко времени отбора пробы; ПАК и Q21 не взаимозаменяемы. Норма серы "
-        "продукта — не более 10 мг/кг. Не придумывай уставки и не заявляй причинный эффект "
-        "доказанным. Управление оборудованием не выполняй."
-    )
+    """Постановка задачи советнику: только причины запуска и время данных.
+
+    Роль, порядок работы и правила записаны в системном промпте советника (ИИ-сервис,
+    agents/seed.py) и здесь не повторяются. Данные запуска передаются отдельно полем input.
+    """
+    lines = [
+        f"- {reason.get('reason', '')}. {reason.get('consequence', '')}".rstrip()
+        for reason in run["reasons"]
+    ]
+    at = run["snapshot"].get("at") or "—"
+    return f"Время данных: {at}. Причины запуска:\n" + "\n".join(lines)
 
 
 def input_for(run: dict[str, Any]) -> dict[str, Any]:
@@ -54,6 +56,9 @@ def input_for(run: dict[str, Any]) -> dict[str, Any]:
         "at": snapshot.get("at"),
         "unit": snapshot.get("unit"),
         "sulfur_level": snapshot.get("sulfur_level"),
+        "sulfur_threshold": SULFUR_THRESHOLD,
+        # Названия и единицы кодов: без них в совете появляются числа без единиц.
+        "parameters": {code: {"name": NAMES[code], "unit": UNITS.get(code)} for code in NAMES},
         "latest": {
             code: {"at": reading["at"], "value": reading["value"]}
             for code, reading in snapshot.get("readings", {}).items()
@@ -66,10 +71,58 @@ def input_for(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Состояния запуска, при которых советник работает и агрегатор держит темп реального времени.
+# Запуск с неизвестным исходом («unknown») флаг не держит: советник уже не работает.
+WORKING = ("queued", "sending", "running")
+
+REALTIME_RESYNC_S = 30.0
+"""Период повторной установки флага: агрегатор после перезапуска флага не помнит."""
+
+REALTIME_RETRY_S = 10.0
+"""Пауза после отказа агрегатора: недоступный агрегатор не должен задерживать каждый шаг
+работника на время ожидания ответа."""
+
+
+class RealtimeFlag:
+    """Флаг реального времени агрегатора: включён, пока советник работает.
+
+    Состояние отправляется при изменении и повторно раз в период. Отказ агрегатора советника
+    не останавливает: флаг будет установлен следующей попыткой.
+    """
+
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self.client = client
+        self.sent: bool | None = None
+        """Последнее принятое агрегатором состояние; пусто — неизвестно или отказ."""
+        self.sent_at = -REALTIME_RESYNC_S
+
+    async def sync(self, enabled: bool) -> None:
+        elapsed = time.monotonic() - self.sent_at
+        if enabled == self.sent and elapsed < REALTIME_RESYNC_S:
+            return
+        if self.sent is None and elapsed < REALTIME_RETRY_S:
+            return
+        try:
+            response = await self.client.put("/api/realtime", json={"enabled": enabled})
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            logger.warning("Флаг реального времени агрегатора не установлен: %s", error)
+            self.sent = None
+        else:
+            self.sent = enabled
+        self.sent_at = time.monotonic()
+
+
 class AdvisorWorker:
-    def __init__(self, service: AdvisorService, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        service: AdvisorService,
+        client: httpx.AsyncClient,
+        realtime: RealtimeFlag | None = None,
+    ) -> None:
         self.service = service
         self.client = client
+        self.realtime = realtime
 
     async def step(self) -> None:
         await asyncio.to_thread(self.service.process)
@@ -77,6 +130,8 @@ class AdvisorWorker:
         if run is None:
             await asyncio.to_thread(self.service.reserve)
             run = await asyncio.to_thread(self.service.active_run)
+        if self.realtime is not None:
+            await self.realtime.sync(run is not None and run["status"] in WORKING)
         if run is None:
             return
         if run["status"] == "queued":
@@ -164,8 +219,11 @@ class AdvisorWorker:
 
 
 async def run_worker(service: AdvisorService) -> None:
-    async with httpx.AsyncClient(base_url=ai_service_url(), timeout=15) as client:
-        worker = AdvisorWorker(service, client)
+    async with (
+        httpx.AsyncClient(base_url=ai_service_url(), timeout=15) as client,
+        httpx.AsyncClient(base_url=aggregator_url(), timeout=3) as aggregator,
+    ):
+        worker = AdvisorWorker(service, client, RealtimeFlag(aggregator))
         while True:
             try:
                 await worker.step()

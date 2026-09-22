@@ -201,20 +201,27 @@ export async function fetchAdvisorRuns(start: Date): Promise<AdvisorRun[]> {
 }
 
 // Карточка совета — объект по схеме advisor/advice.py (AdviceCard).
-export type AdviceRisk = 'none' | 'watch' | 'warning' | 'critical'
+// Три типа совета: режим не менять, проверить, изменить режим.
+export type AdviceType = 'hold' | 'check' | 'adjust'
+
+export interface AdviceValue {
+  value: number
+  unit: string
+}
 
 export interface AdviceAction {
   type: 'adjust' | 'check'
   text: string
   parameter: string | null
+  // В советах, записанных до обязательных текущих значений, поля нет.
+  current?: AdviceValue | null
   direction: 'increase' | 'decrease' | 'keep' | null
-  target: { value: number; unit: string } | null
+  target: AdviceValue | null
 }
 
 export interface AdviceCardData {
-  decision: 'act' | 'hold'
+  type: AdviceType
   headline: string
-  risk: AdviceRisk
   actions: AdviceAction[]
   because: string
   protection: string

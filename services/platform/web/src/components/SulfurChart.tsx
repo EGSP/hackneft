@@ -126,7 +126,7 @@ export function SulfurChart({
             silent: true,
             symbol: 'none',
             lineStyle: { color: LIMIT_COLOR, type: 'dashed', width: 1.6 },
-            label: { formatter: `Норма ${limit} мг/кг`, position: 'insideEndTop' },
+            label: { formatter: `Порог ${limit} мг/кг`, position: 'insideEndTop' },
             data: [{ yAxis: limit }],
           },
           // Полосы фона принадлежат оси времени, но в ECharts область наносится только

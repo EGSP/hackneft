@@ -32,71 +32,115 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AdviceTarget(_Strict):
-    value: float = Field(description="Целевое значение параметра")
-    unit: str = Field(max_length=20, description="Единица измерения: °C, т/ч, МПа, нм³/ч")
+AdviceType = Literal["hold", "check", "adjust"]
+"""Тип совета. Три значения и ничего сверх: при более дробной градации модель ставила
+«предупреждение» совету «ничего не делать»."""
+
+
+def normalize_card(card: dict[str, Any]) -> dict[str, Any]:
+    """Карточка прежнего формата (decision и risk) в виде с типом совета.
+
+    Советы, записанные до перехода на три типа, остаются в базе; интерфейс получает их уже
+    с полем type, чтобы не различать версии.
+    """
+    if "type" in card:
+        return card
+    actions = card.get("actions") or []
+    if card.get("decision") == "hold" or not actions:
+        kind = "hold"
+    elif any(action.get("type") == "adjust" for action in actions):
+        kind = "adjust"
+    else:
+        kind = "check"
+    rest = {key: value for key, value in card.items() if key not in ("decision", "risk")}
+    return {"type": kind, **rest}
+
+
+class AdviceValue(_Strict):
+    value: float = Field(description="Число из исходных данных или обоснованная цель")
+    unit: str = Field(max_length=20, description="Единица измерения: мг/кг, °C, т/ч, МПа, нм³/ч")
 
 
 class AdviceAction(_Strict):
     type: Literal["adjust", "check"] = Field(
-        description="adjust — изменить режим установки; check — проверить прибор, подачу или данные"
+        description="adjust — изменить режим установки; check — проверить прибор, пробу или подачу"
     )
-    text: str = Field(
-        max_length=60,
-        description="Действие в повелительном наклонении, коротко: «Снизить подачу сырья»",
-    )
-    parameter: Parameter | None = Field(
+    parameter: Parameter = Field(
         description=(
-            "Код параметра, к которому относится действие; null, если ни к одному. "
+            "Код параметра, к которому относится действие. "
             + "; ".join(f"{code} — {name}" for code, name in PARAMETERS.items())
         )
+    )
+    text: str = Field(
+        max_length=90,
+        description=(
+            "Конкретное действие: что сделать, с каким параметром и с какими числами. "
+            "Примеры: «Снизить подачу сырья с 201 до 185 т/ч»; «Отобрать внеочередную пробу "
+            "ЛИМС: ПАК 9,99 мг/кг при пороге 10 мг/кг». Общие слова без параметра и числа "
+            "(«Усилить контроль», «Проверить сырьё») недопустимы"
+        ),
+    )
+    current: AdviceValue = Field(
+        description="Последнее значение параметра из исходных данных, с единицей"
     )
     direction: Literal["increase", "decrease", "keep"] | None = Field(
         description="Направление изменения; null для проверки"
     )
-    target: AdviceTarget | None = Field(
+    target: AdviceValue | None = Field(
         description=(
-            "Числовая цель — только если точно известно, до какого значения менять. "
-            "Если значение не обосновано данными, null"
+            "Целевое значение — только если оно следует из данных. Для проверки — значение, "
+            "при котором проверка считается пройденной, либо null"
         )
     )
 
 
 class AdviceCard(_Strict):
-    decision: Literal["act", "hold"] = Field(
+    type: AdviceType = Field(
         description=(
-            "act — оператору нужно действовать, actions не пуст; hold — ничего не делать, "
-            "actions пуст"
+            "Тип совета. hold — режим не менять: сера ниже порога 10 мг/кг с запасом и не "
+            "растёт, действий нет, actions пуст; check — режим пока не менять, но проверить "
+            "конкретные приборы, пробы или подачу: признаки риска есть, а данных для изменения "
+            "режима мало, actions — только проверки; adjust — изменить режим: превышение "
+            "порога подтверждено или неизбежно без действий, actions содержит изменение режима"
         )
     )
     headline: str = Field(
-        max_length=50,
-        description="Главное одной фразой: «Снизить подачу сырья» или «Ничего не делать»",
-    )
-    risk: Literal["none", "watch", "warning", "critical"] = Field(
+        max_length=60,
         description=(
-            "Риск выпуска топлива вне нормы 10 мг/кг. "
-            "none — сера в норме с запасом, признаков ухудшения нет; "
-            "watch — сера в норме, но изменились сырьё, режим, газ или данные, и это может "
-            "повлиять на качество; "
-            "warning — сера устойчиво близка к норме (не ниже раннего порога 8 мг/кг) или "
-            "растёт к норме; "
-            "critical — превышение 10 мг/кг подтверждено ПАК или ЛИМС либо неизбежно без "
-            "действий"
-        )
+            "Главное одной фразой с параметром и числом: «Снизить подачу сырья до 185 т/ч», "
+            "«Сверить ПАК 9,99 мг/кг с пробой ЛИМС», «Режим не менять: сера 6,2 мг/кг»"
+        ),
     )
     actions: list[AdviceAction] = Field(
         max_length=3,
         description=(
             "Действия по приоритету. Несколько — только при реальной необходимости. "
-            "При decision = hold — пустой список"
+            "При type = hold — пустой список"
         ),
     )
-    because: str = Field(max_length=120, description="Почему — одна короткая фраза")
-    protection: str = Field(max_length=50, description="Вывод агента защиты одной фразой")
-    production: str = Field(max_length=50, description="Вывод агента производства одной фразой")
+    because: str = Field(
+        max_length=160,
+        description=(
+            "Факты, на которых основан совет: значения с единицами, изменение за период и "
+            "время. Пример: «ПАК 9,99 мг/кг, +1,2 мг/кг за 30 мин; подача сырья 182 → 201 т/ч "
+            "с 10:20». Без чисел не пиши"
+        ),
+    )
+    protection: str = Field(
+        max_length=80,
+        description="Вывод агента защиты одной фразой с числами: что угрожает порогу и насколько",
+    )
+    production: str = Field(
+        max_length=80,
+        description="Вывод агента производства одной фразой с числами либо причина отказа",
+    )
     expected_effect: str = Field(
-        max_length=80, description="Что должно измениться и по какому показателю это видно"
+        max_length=100,
+        description=(
+            "Какой показатель, до какого значения и к какому сроку должен измениться: "
+            "«Сера ПАК ниже 9 мг/кг через 60 мин». При hold — какое значение подтвердит, "
+            "что режим можно не менять"
+        ),
     )
     recheck_after_minutes: int | None = Field(
         ge=5, le=1440, description="Через сколько минут данных оценить эффект; null — не нужно"
@@ -104,10 +148,18 @@ class AdviceCard(_Strict):
     confidence: Literal["high", "medium", "low"] = Field(description="Уверенность в выводе")
 
     @model_validator(mode="after")
-    def _hold_has_no_actions(self) -> "AdviceCard":
-        # Схема JSON этого не выражает: при «ничего не делать» действия отбрасываются.
-        if self.decision == "hold":
+    def _type_matches_actions(self) -> "AdviceCard":
+        # Схема JSON согласованности типа и действий не выражает, поэтому тип сверяется с
+        # действиями: при «режим не менять» действия отбрасываются, без действий совет не
+        # может требовать проверки, а изменение режима означает тип adjust.
+        if self.type == "hold":
             self.actions = []
+        elif not self.actions:
+            self.type = "hold"
+        elif any(action.type == "adjust" for action in self.actions):
+            self.type = "adjust"
+        else:
+            self.type = "check"
         return self
 
 

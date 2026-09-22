@@ -2,32 +2,39 @@ import {
   CheckCircleFilled,
   ClockCircleFilled,
   CloseCircleFilled,
+  DatabaseOutlined,
+  ExperimentOutlined,
+  FieldTimeOutlined,
+  FlagOutlined,
+  HourglassOutlined,
   MinusCircleFilled,
   RobotOutlined,
   SyncOutlined,
+  WarningFilled,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Badge, Progress, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Badge, Progress, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useEffect, useState, type ReactNode } from 'react'
 
-import { fetchAdvices, fetchAdvisorStatus, type AdvisorStatus } from '../api'
+import { fetchAdvices, fetchAdvisorStatus, type AdvisorReason, type AdvisorStatus } from '../api'
 import { AdviceCard } from './AdviceCard'
 import { RUN_STATUS_LABEL, eventAppearance } from './appearance'
 
-type CheckState = 'ok' | 'wait' | 'block' | 'idle'
+type CheckState = 'ok' | 'wait' | 'block' | 'idle' | 'work'
 
-const CHECK_ICON: Record<CheckState, ReactNode> = {
-  ok: <CheckCircleFilled style={{ color: '#52c41a' }} />,
-  wait: <ClockCircleFilled style={{ color: '#fa8c16' }} />,
-  block: <CloseCircleFilled style={{ color: '#cf1322' }} />,
-  idle: <MinusCircleFilled style={{ color: '#bfbfbf' }} />,
+const STATE_COLOR: Record<CheckState, string> = {
+  ok: '#52c41a',
+  wait: '#fa8c16',
+  block: '#cf1322',
+  idle: '#bfbfbf',
+  work: '#722ed1',
 }
 
-const SULFUR_LEVEL: Record<AdvisorStatus['sulfur_level'], { label: string; color: string }> = {
-  normal: { label: 'Норма', color: 'success' },
-  warning: { label: 'Близко к норме', color: 'warning' },
-  exceeded: { label: 'Превышение', color: 'error' },
+const SULFUR_LEVEL: Record<AdvisorStatus['sulfur_level'], { label: string; state: CheckState }> = {
+  normal: { label: 'ниже порога', state: 'ok' },
+  warning: { label: 'близко к порогу', state: 'wait' },
+  exceeded: { label: 'выше порога', state: 'block' },
 }
 
 function formatMoment(value: string | null): string {
@@ -39,15 +46,47 @@ function formatMinutes(ms: number): string {
   return minutes >= 60 ? `${Math.floor(minutes / 60)} ч ${minutes % 60} мин` : `${minutes} мин`
 }
 
-function Check({ state, title, children }: { state: CheckState; title: string; children: ReactNode }) {
+/** Состояние одним значком; заголовок и подробности — в подсказке при наведении. */
+function StateIcon({
+  state,
+  title,
+  details,
+  children,
+}: {
+  state: CheckState
+  title: string
+  details?: ReactNode
+  children: ReactNode
+}) {
   return (
-    <div className="advisor-check">
-      {CHECK_ICON[state]}
-      <div className="advisor-check-body">
-        <Typography.Text strong>{title}</Typography.Text>
-        <div className="advisor-check-text">{children}</div>
-      </div>
-    </div>
+    <Tooltip
+      title={
+        <div className="advisor-tip">
+          <strong>{title}</strong>
+          {details && <div>{details}</div>}
+        </div>
+      }
+    >
+      <span className="advisor-state" style={{ color: STATE_COLOR[state] }} aria-label={title}>
+        {children}
+      </span>
+    </Tooltip>
+  )
+}
+
+function ReasonList({ reasons }: { reasons: AdvisorReason[] }) {
+  return (
+    <ul className="advisor-tip-list">
+      {reasons.map((reason) => {
+        const look = eventAppearance(reason)
+        return (
+          <li key={reason.kind}>
+            <span style={{ color: look.color }}>{look.icon}</span> {reason.reason}.{' '}
+            {reason.consequence}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -67,7 +106,8 @@ function useNow(enabled: boolean): number {
 /**
  * Показатели модуля запуска советника — те же условия, по которым AdvisorService.reserve
  * решает, создавать ли запуск: полнота и достоверность данных, наличие новых причин,
- * общий интервал между запусками и отсутствие выполняющегося запуска.
+ * общий интервал между запусками и отсутствие выполняющегося запуска. Каждое состояние
+ * показано значком, подробности — в подсказке.
  *
  * Интервал отсчитывается по времени данных: при воспроизведении архива (clock=replay)
  * это время последнего окна, а не часы компьютера, поэтому и таймер показывает остаток
@@ -87,22 +127,28 @@ function LaunchGate({ status }: { status: AdvisorStatus }) {
   const pending = status.pending_reasons
   const running = status.active_run_id !== null
 
-  let overall: { text: string; badge: 'processing' | 'error' | 'warning' | 'success' | 'default' }
+  let overall: { text: string; state: CheckState; icon: ReactNode }
   if (running) {
-    overall = { text: 'Советник работает', badge: 'processing' }
+    overall = { text: 'Советник работает', state: 'work', icon: <SyncOutlined spin /> }
   } else if (dataBlocked) {
-    overall = { text: 'Запуск приостановлен', badge: 'error' }
+    overall = { text: 'Запуск приостановлен', state: 'block', icon: <CloseCircleFilled /> }
   } else if (pending.length === 0) {
-    overall = { text: 'Ожидает событий', badge: 'default' }
+    overall = { text: 'Ожидает событий', state: 'idle', icon: <MinusCircleFilled /> }
   } else if (remaining > 0) {
-    overall = { text: `Запуск через ${formatMinutes(remaining)}`, badge: 'warning' }
+    overall = {
+      text: `Запуск через ${formatMinutes(remaining)}`,
+      state: 'wait',
+      icon: <ClockCircleFilled />,
+    }
   } else if (dataWaiting) {
-    overall = { text: 'Ожидает данных окна', badge: 'warning' }
+    overall = { text: 'Ожидает данных окна', state: 'wait', icon: <HourglassOutlined /> }
   } else {
-    overall = { text: 'Готов к запуску', badge: 'success' }
+    overall = { text: 'Готов к запуску', state: 'ok', icon: <CheckCircleFilled /> }
   }
 
   const level = SULFUR_LEVEL[status.sulfur_level] ?? SULFUR_LEVEL.normal
+  const dataState: CheckState = dataBlocked ? 'block' : dataWaiting ? 'wait' : 'ok'
+  const lastError = !running ? status.last_run?.error : null
 
   return (
     <div className="advisor-gate">
@@ -110,91 +156,107 @@ function LaunchGate({ status }: { status: AdvisorStatus }) {
         <Typography.Title level={5} style={{ margin: 0 }}>
           <RobotOutlined /> Советник
         </Typography.Title>
-        <Badge status={overall.badge} text={overall.text} />
-      </div>
+        <div className="advisor-states">
+          <StateIcon state={overall.state} title={overall.text}>
+            {overall.icon}
+          </StateIcon>
 
-      <div className="advisor-gate-meta">
-        <span>
-          Время данных: <strong>{formatMoment(status.observed_at)}</strong>
-        </span>
-        <Tooltip title="Интервал и таймер считаются по этим часам">
-          <Tag bordered={false}>{live ? 'Реальное время' : 'Воспроизведение'}</Tag>
-        </Tooltip>
-      </div>
-      <div className="advisor-gate-meta">
-        <span>Сера по ПАК:</span>
-        <Tag color={level.color} bordered={false}>
-          {level.label}
-        </Tag>
-        <span>Активных рисков: {status.active_reasons.length}</span>
-      </div>
+          <StateIcon
+            state="idle"
+            title={`Время данных: ${formatMoment(status.observed_at)}`}
+            details={
+              live
+                ? 'Интервал и таймер считаются по часам компьютера (реальное время)'
+                : 'Интервал и таймер считаются по времени данных (воспроизведение архива)'
+            }
+          >
+            <FieldTimeOutlined style={{ color: live ? STATE_COLOR.work : undefined }} />
+          </StateIcon>
 
-      <Check
-        state={dataBlocked ? 'block' : dataWaiting ? 'wait' : 'ok'}
-        title="Данные"
-      >
-        {dataBlocked
-          ? `Нет свежих достоверных показаний: ${status.blocked_by_data.join(', ')}`
-          : status.window_open
-            ? 'Окно данных ещё не закрыто'
-            : status.inputs_pending
-              ? 'Обрабатываются полученные пакеты'
-              : 'Полные и достоверные'}
-      </Check>
-
-      <Check state={pending.length > 0 ? 'ok' : 'idle'} title="Поводы для запуска">
-        {pending.length === 0 ? (
-          'Новых причин нет'
-        ) : (
-          <div className="advisor-reasons">
-            {pending.map((reason) => {
-              const look = eventAppearance(reason)
-              return (
-                <Tooltip key={reason.kind} title={reason.consequence}>
-                  <Tag icon={look.icon} color={look.color} bordered={false} style={{ marginInlineEnd: 0 }}>
-                    {reason.reason}
-                  </Tag>
-                </Tooltip>
+          <StateIcon
+            state={level.state}
+            title={`Сера по ПАК ${level.label} 10 мг/кг`}
+            details={
+              status.active_reasons.length > 0 ? (
+                <>
+                  Активные риски:
+                  <ReasonList reasons={status.active_reasons} />
+                </>
+              ) : (
+                'Активных рисков нет'
               )
-            })}
-          </div>
-        )}
-      </Check>
+            }
+          >
+            <ExperimentOutlined />
+          </StateIcon>
 
-      <Check state={remaining > 0 ? 'wait' : 'ok'} title={`Интервал между запусками ${status.interval_minutes} мин`}>
-        {nextAt === null ? (
-          'Запусков ещё не было'
-        ) : (
-          <>
-            {remaining > 0
-              ? `Следующий не раньше ${dayjs(nextAt).format('HH:mm')}, осталось ${formatMinutes(remaining)}`
-              : `Выдержан, последний запуск ${formatMoment(status.last_started_at)}`}
+          <StateIcon
+            state={dataState}
+            title="Данные"
+            details={
+              dataBlocked
+                ? `Нет свежих достоверных показаний: ${status.blocked_by_data.join(', ')}`
+                : status.window_open
+                  ? 'Окно данных ещё не закрыто'
+                  : status.inputs_pending
+                    ? 'Обрабатываются полученные пакеты'
+                    : 'Полные и достоверные'
+            }
+          >
+            <DatabaseOutlined />
+          </StateIcon>
+
+          <StateIcon
+            state={pending.length > 0 ? 'ok' : 'idle'}
+            title="Причины запуска"
+            details={pending.length === 0 ? 'Новых причин нет' : <ReasonList reasons={pending} />}
+          >
+            <Badge count={pending.length} size="small" offset={[4, -2]}>
+              <FlagOutlined style={{ color: STATE_COLOR[pending.length > 0 ? 'ok' : 'idle'] }} />
+            </Badge>
+          </StateIcon>
+
+          <StateIcon
+            state={remaining > 0 ? 'wait' : 'ok'}
+            title={`Интервал между запусками ${status.interval_minutes} мин`}
+            details={
+              nextAt === null
+                ? 'Запусков ещё не было'
+                : remaining > 0
+                  ? `Следующий не раньше ${dayjs(nextAt).format('HH:mm')}, осталось ${formatMinutes(remaining)}`
+                  : `Выдержан, последний запуск ${formatMoment(status.last_started_at)}`
+            }
+          >
             <Progress
+              type="circle"
+              size={16}
               percent={elapsedShare}
               showInfo={false}
-              size="small"
-              status={remaining > 0 ? 'active' : 'success'}
-              style={{ margin: 0 }}
+              strokeColor={STATE_COLOR[remaining > 0 ? 'wait' : 'ok']}
             />
-          </>
-        )}
-      </Check>
+          </StateIcon>
 
-      <Check state={running ? 'wait' : 'ok'} title="Выполнение">
-        {running ? (
-          <>
-            <SyncOutlined spin /> Идёт запуск, новые удержаны
-          </>
-        ) : status.last_run ? (
-          `Последний: ${RUN_STATUS_LABEL[status.last_run.status] ?? status.last_run.status}, ${formatMoment(status.last_run.requested_at)}`
-        ) : (
-          'Свободно'
-        )}
-      </Check>
+          <StateIcon
+            state={running ? 'work' : 'ok'}
+            title="Выполнение"
+            details={
+              running
+                ? 'Идёт запуск, новые удержаны; агрегатор переведён в реальное время'
+                : status.last_run
+                  ? `Последний: ${RUN_STATUS_LABEL[status.last_run.status] ?? status.last_run.status}, ${formatMoment(status.last_run.requested_at)}`
+                  : 'Свободно'
+            }
+          >
+            <RobotOutlined />
+          </StateIcon>
 
-      {status.last_run?.error && !running && (
-        <Alert type="warning" showIcon message={status.last_run.error} style={{ fontSize: 12 }} />
-      )}
+          {lastError && (
+            <StateIcon state="wait" title="Последний запуск завершился с ошибкой" details={lastError}>
+              <WarningFilled />
+            </StateIcon>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

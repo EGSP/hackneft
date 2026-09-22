@@ -235,40 +235,30 @@ body {
   gap: 8px;
 }
 
-.advisor-gate-meta {
+/* Состояния допуска советника — значки в строке заголовка, подробности в подсказках. */
+.advisor-states {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 12px;
-  color: rgba(0, 0, 0, 0.65);
+  gap: 12px;
+  font-size: 16px;
 }
 
-.advisor-check {
+.advisor-state {
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+.advisor-tip {
   display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.advisor-check > .anticon {
-  margin-top: 4px;
-}
-
-.advisor-check-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.advisor-check-text {
-  font-size: 12px;
-  color: rgba(0, 0, 0, 0.65);
-}
-
-.advisor-reasons {
-  display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
-  margin-top: 2px;
+  font-size: 12px;
+}
+
+.advisor-tip-list {
+  margin: 2px 0 0;
+  padding-left: 16px;
 }
 
 /* Карточки советов. Актуальная — развёрнута; прежние свёрнуты в строку и приглушены. */

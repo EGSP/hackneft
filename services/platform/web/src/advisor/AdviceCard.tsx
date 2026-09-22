@@ -10,19 +10,28 @@ import {
 } from '@ant-design/icons'
 import { Button, Modal, Popover, Tag, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
-import type { Advice, AdviceAction, AdviceCardData, AdviceRisk } from '../api'
+import type { Advice, AdviceAction, AdviceCardData, AdviceType, AdviceValue } from '../api'
 import { eventAppearance } from './appearance'
 
-// Оформление карточки совета: риск задаёт цвет полосы и метки, решение — главный значок.
+// Оформление карточки совета: тип совета задаёт цвет полосы, метку и главный значок.
+// Типов три, отдельной градации риска нет: она противоречила типу («предупреждение» при
+// «ничего не делать»).
 
-export const RISK: Record<AdviceRisk, { label: string; color: string }> = {
-  none: { label: 'Риска нет', color: '#389e0d' },
-  watch: { label: 'Наблюдение', color: '#1677ff' },
-  warning: { label: 'Предупреждение', color: '#fa8c16' },
-  critical: { label: 'Критично', color: '#cf1322' },
+export const ADVICE_TYPE: Record<AdviceType, { label: string; color: string; icon: ReactNode }> = {
+  hold: { label: 'Режим не менять', color: '#389e0d', icon: <CheckCircleOutlined /> },
+  check: { label: 'Проверить', color: '#fa8c16', icon: <SearchOutlined /> },
+  adjust: { label: 'Изменить режим', color: '#cf1322', icon: <ThunderboltOutlined /> },
+}
+
+function typeOf(card: AdviceCardData) {
+  return ADVICE_TYPE[card.type] ?? ADVICE_TYPE.check
+}
+
+function formatValue(value: AdviceValue): string {
+  return `${value.value.toLocaleString('ru-RU')} ${value.unit}`.trim()
 }
 
 // Названия параметров действий — тот же перечень, что в схеме карточки (advisor/advice.py).
@@ -48,10 +57,11 @@ function formatTime(value: string): string {
 }
 
 function DecisionIcon({ card }: { card: AdviceCardData }) {
-  return card.decision === 'hold' ? (
-    <CheckCircleOutlined style={{ color: RISK.none.color }} />
-  ) : (
-    <ThunderboltOutlined style={{ color: RISK[card.risk].color }} />
+  const look = typeOf(card)
+  return (
+    <Tooltip title={look.label}>
+      <span style={{ color: look.color }}>{look.icon}</span>
+    </Tooltip>
   )
 }
 
@@ -76,15 +86,13 @@ function ActionRow({ action }: { action: AdviceAction }) {
       </span>
       <span>
         {action.text}
-        {action.target && (
-          <strong>
-            {' '}
-            → {action.target.value.toLocaleString('ru-RU')} {action.target.unit}
-          </strong>
-        )}
         {action.parameter && (
-          <Tooltip title={action.parameter}>
-            <span className="advice-code">{PARAMETER_LABEL[action.parameter] ?? action.parameter}</span>
+          <Tooltip title={PARAMETER_LABEL[action.parameter] ?? action.parameter}>
+            <span className="advice-code">
+              {action.parameter}
+              {action.current && `: ${formatValue(action.current)}`}
+              {action.target && ` → ${formatValue(action.target)}`}
+            </span>
           </Tooltip>
         )}
       </span>
@@ -139,11 +147,11 @@ function AdviceBody({ advice, full }: { advice: Advice; full: boolean }) {
 }
 
 function AdviceMeta({ advice }: { advice: Advice }) {
-  const risk = RISK[advice.card.risk]
+  const look = typeOf(advice.card)
   return (
     <div className="advice-meta">
-      <Tag color={risk.color} bordered={false} style={{ marginInlineEnd: 0 }}>
-        {risk.label}
+      <Tag color={look.color} bordered={false} style={{ marginInlineEnd: 0 }}>
+        {look.label}
       </Tag>
       <span>{formatTime(advice.created_at)}</span>
       <span>{CONFIDENCE[advice.card.confidence]}</span>
@@ -187,12 +195,12 @@ interface Props {
  */
 export function AdviceCard({ advice, current }: Props) {
   const [open, setOpen] = useState(false)
-  const risk = RISK[advice.card.risk]
+  const look = typeOf(advice.card)
 
   const card = current ? (
     <div
       className="advice-card advice-card--current"
-      style={{ borderLeftColor: risk.color }}
+      style={{ borderLeftColor: look.color }}
       onClick={() => setOpen(true)}
     >
       <div className="advice-card-top">
@@ -206,7 +214,7 @@ export function AdviceCard({ advice, current }: Props) {
   ) : (
     <div
       className="advice-card advice-card--stale"
-      style={{ borderLeftColor: risk.color }}
+      style={{ borderLeftColor: look.color }}
       onClick={() => setOpen(true)}
     >
       <DecisionIcon card={advice.card} />

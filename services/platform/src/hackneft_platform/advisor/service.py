@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from hackneft_platform.catalog import SULFUR_LIMS_CODE
 from hackneft_platform.events import SensorDataCreated
 
-from .advice import AdviceCard
+from .advice import AdviceCard, normalize_card
 from .rules import TRACKED, Monitor, Policy, Reading, Reason, evaluate
 from .schema import AdvisorAdvice, AdvisorEvent, AdvisorInput, AdvisorRun, AdvisorState
 
@@ -159,7 +159,7 @@ class AdvisorService:
                 db.commit()
                 return None
             run_id = str(uuid4())
-            # Активный риск всегда включается в контекст, даже если новый повод — ЛИМС.
+            # Активный риск всегда включается в контекст, даже если новая причина — ЛИМС.
             reasons = state.active | state.pending
             db.add(
                 AdvisorRun(
@@ -285,8 +285,8 @@ class AdvisorService:
                 session_id=run.session_id,
                 created_at=run.requested_at,
                 recorded_at=datetime.now(),
-                decision=card.decision,
-                risk=card.risk,
+                decision=card.type,
+                risk=card.type,
                 headline=card.headline,
                 reasons=run.reasons,
                 card=card.model_dump(mode="json"),
@@ -313,7 +313,7 @@ class AdvisorService:
             "created_at": row.created_at,
             "recorded_at": row.recorded_at,
             "reasons": row.reasons,
-            "card": row.card,
+            "card": normalize_card(row.card),
         }
 
     def active_run(self) -> dict[str, Any] | None:
