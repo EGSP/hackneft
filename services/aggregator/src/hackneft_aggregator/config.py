@@ -42,6 +42,13 @@ class AggregatorConfig:
     Отношение шага к интервалу и есть коэффициент ускорения симуляции: при равенстве
     значений поток идёт в реальном темпе, при шаге больше интервала — быстрее реального.
     """
+    lims_delay_minutes: float
+    """Задержка готовности результата ЛИМС после отбора пробы, в минутах.
+
+    Время в выгрузке ЛИМС — момент отбора, а результат появляется в системе в течение 4 часов
+    (docs/Спецификация данных.md, раздел 9). Показание отправляется, когда курсор проходит
+    момент «отбор + задержка», с отметкой времени отбора. Так платформа не получает результат
+    раньше, чем он стал бы известен на установке."""
     batch_limit: int
     """Предельное число записей в одном запросе к платформе. Такт, давший больше записей,
     отправляется несколькими запросами подряд."""
@@ -96,6 +103,7 @@ def load_config() -> AggregatorConfig:
 
     interval_minutes = _number("AGGREGATOR_INTERVAL_MINUTES", 10.0, problems, 0.01)
     step_minutes = _number("AGGREGATOR_STEP_MINUTES", 10.0, problems, 0.01)
+    lims_delay_minutes = _number("AGGREGATOR_LIMS_DELAY_MINUTES", 240.0, problems, 0)
     batch_limit = int(_number("AGGREGATOR_BATCH_LIMIT", 500, problems, 1))
     timeout_ms = _number("AGGREGATOR_REQUEST_TIMEOUT_MS", 10000, problems, 100)
     port = int(_number("AGGREGATOR_PORT", 8200, problems, 1))
@@ -110,6 +118,7 @@ def load_config() -> AggregatorConfig:
         start_date=start_date,
         interval_minutes=interval_minutes,
         step_minutes=step_minutes,
+        lims_delay_minutes=lims_delay_minutes,
         batch_limit=batch_limit,
         platform_url=(os.getenv("PLATFORM_URL") or "http://localhost:8000").rstrip("/"),
         request_timeout_s=timeout_ms / 1000,

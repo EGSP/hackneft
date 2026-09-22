@@ -384,6 +384,7 @@ export function Dashboard() {
             pakName={pakName}
             limsName={limsName}
             limit={limit}
+            now={win.anchor}
             loading={loading}
             extent={win.extent}
             view={win.view}
