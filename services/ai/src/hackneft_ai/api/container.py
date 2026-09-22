@@ -1,11 +1,14 @@
 """Сборка служб сервиса и их остановка."""
 
+import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 
 import httpx2
 
 from ..agents.seed import seed_defaults
+from ..bootstrap import start_bootstrap
 from ..agents.service import AgentDirectory
 from ..config import AppConfig
 from ..db.database import Database
@@ -46,6 +49,7 @@ class Services:
     tools: ToolsFactory
     runner: AgentRunner
     sessions: SessionsService
+    bootstrap: asyncio.Task[None]
 
 
 async def start_services(config: AppConfig) -> Services:
@@ -94,6 +98,7 @@ async def start_services(config: AppConfig) -> Services:
     await models.check_problems()
     await seed_defaults(agents, instructions)
     availability.start()
+    bootstrap = start_bootstrap(config.bootstrap, providers, models, mcp)
 
     return Services(
         config=config,
@@ -112,10 +117,14 @@ async def start_services(config: AppConfig) -> Services:
         tools=tools,
         runner=runner,
         sessions=sessions,
+        bootstrap=bootstrap,
     )
 
 
 async def stop_services(services: Services) -> None:
+    services.bootstrap.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await services.bootstrap
     await services.availability.stop()
     await services.runner.shutdown()
     await services.registry.aclose()

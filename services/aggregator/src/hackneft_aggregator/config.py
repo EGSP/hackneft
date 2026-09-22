@@ -42,6 +42,10 @@ class AggregatorConfig:
     Отношение шага к интервалу и есть коэффициент ускорения симуляции: при равенстве
     значений поток идёт в реальном темпе, при шаге больше интервала — быстрее реального.
     """
+    preload_hours: float
+    """Первичная закачка: сколько часов истории отправить сразу после построения указателей,
+    если курсор стоит в начальном положении. Агенты платформы с первого запуска получают
+    историю для анализа, а не пустую базу. Ноль — закачки нет."""
     lims_delay_minutes: float
     """Задержка готовности результата ЛИМС после отбора пробы, в минутах.
 
@@ -103,6 +107,7 @@ def load_config() -> AggregatorConfig:
 
     interval_minutes = _number("AGGREGATOR_INTERVAL_MINUTES", 10.0, problems, 0.01)
     step_minutes = _number("AGGREGATOR_STEP_MINUTES", 10.0, problems, 0.01)
+    preload_hours = _number("AGGREGATOR_PRELOAD_HOURS", 0.0, problems, 0)
     lims_delay_minutes = _number("AGGREGATOR_LIMS_DELAY_MINUTES", 240.0, problems, 0)
     batch_limit = int(_number("AGGREGATOR_BATCH_LIMIT", 500, problems, 1))
     timeout_ms = _number("AGGREGATOR_REQUEST_TIMEOUT_MS", 10000, problems, 100)
@@ -118,6 +123,7 @@ def load_config() -> AggregatorConfig:
         start_date=start_date,
         interval_minutes=interval_minutes,
         step_minutes=step_minutes,
+        preload_hours=preload_hours,
         lims_delay_minutes=lims_delay_minutes,
         batch_limit=batch_limit,
         platform_url=(os.getenv("PLATFORM_URL") or "http://localhost:8000").rstrip("/"),
