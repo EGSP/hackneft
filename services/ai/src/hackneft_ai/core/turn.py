@@ -185,7 +185,12 @@ async def run_turn(
         if text != "" and terminal_index is None:
             await deps.journal.append(AssistantNoteEvent(step=step, text=text))
 
-        batch_size = len(executable)
+        # attempt_completion входит в пачку последним вызовом: в журнале он виден как вызов
+        # инструмента, результатом которого служит запрос итогового ответа.
+        completing = (
+            terminal_index is not None and reply.tool_calls[terminal_index].name != ASK_USER
+        )
+        batch_size = len(executable) + (1 if completing else 0)
         for batch_index, call in enumerate(executable, start=1):
             tool_calls += 1
             await deps.journal.append(
@@ -241,11 +246,35 @@ async def run_turn(
                 return await finish(declared if declared != "" else text, "question", step)
             # attempt_completion лишь объявляет конец работы; итог модель даёт ответом на
             # запрос, который возвращает этот вызов (structured.py).
+            request = final_request(options.result_schema)
+            tool_calls += 1
+            await deps.journal.append(
+                ToolCallEvent(
+                    call_id=call.id,
+                    name=call.name,
+                    raw_arguments=call.raw_arguments,
+                    step=step,
+                    batch_size=batch_size,
+                    batch_index=batch_size,
+                )
+            )
+            await deps.journal.append(
+                ToolResultEvent(
+                    call_id=call.id,
+                    name=call.name,
+                    kind="ok",
+                    content=request,
+                    duration_ms=0,
+                    step=step,
+                    batch_size=batch_size,
+                    batch_index=batch_size,
+                )
+            )
             return await conclude(
                 [
                     *messages,
                     AssistantMessage(text, (call,)),
-                    ToolMessage(call.id, final_request(options.result_schema)),
+                    ToolMessage(call.id, request),
                 ],
                 step,
             )

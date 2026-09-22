@@ -100,7 +100,9 @@ async def final_answer(
     """Последнее обращение к модели за итогом. Каждое обращение записывается шагом журнала.
 
     `conversation` уже оканчивается запросом итогового ответа. Инструменты модели не
-    передаются: ход закончен, и отвечать нужно сразу.
+    передаются, рассуждение выключено: ход закончен, выводы сделаны в ходе работы, и
+    отвечать нужно сразу — повторное рассуждение над всей историей лишь тратит бюджет вывода
+    и рискует зациклиться.
     """
     messages = list(conversation)
     problems: list[str] = []
@@ -116,6 +118,7 @@ async def final_answer(
             snapshot_id=snapshot_id,
             deps=deps,
             result_schema=schema,
+            reasoning=False,
         )
         reply = answered.reply
         content = reply.content.strip()

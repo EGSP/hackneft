@@ -103,12 +103,17 @@ async def model_step(
     snapshot_id: str,
     deps: TurnDeps,
     result_schema: Mapping[str, Any] | None = None,
+    reasoning: bool = True,
 ) -> StepReply:
-    """Обращение шага к модели. Каждая попытка записывается в журнал началом шага и ответом."""
+    """Обращение шага к модели. Каждая попытка записывается в журнал началом шага и ответом.
+
+    `reasoning=False` выключает рассуждение с первой попытки; повторять такой шаг без
+    рассуждения бессмысленно, поэтому попытка одна.
+    """
     strict = result_schema is not None
     reply: ModelReply | None = None
     context: tuple[AgentMessage, ...] = ()
-    for retry in _RETRIES:
+    for retry in _RETRIES if reasoning else (None,):
         # Записывается до обращения к модели: иначе журнал молчит всё время, пока модель
         # формирует ответ, а это почти вся длительность хода.
         await deps.journal.append(
@@ -127,7 +132,7 @@ async def model_step(
             [*messages, *context],
             specs,
             result_schema=result_schema,
-            reasoning_effort="none" if retry == "no_reasoning" else None,
+            reasoning_effort="none" if retry == "no_reasoning" or not reasoning else None,
         )
         # Ответ записывается до разбора его содержимого: расход токенов нужен и тогда, когда
         # ход на этом ответе оборвётся.
